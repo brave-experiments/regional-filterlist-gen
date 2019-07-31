@@ -1,0 +1,6 @@
+crawler/graphml
+crawler/errors
+crawler/images
+crawler/node_modules
+crawler/timeouts.log
+crawler/top-1m.csv
