@@ -19,55 +19,43 @@ const brave_args = [
     '--no-sandbox'
 ];
 
-const responseTimeout = 5000;
+const errorsFolderPath = __dirname + '/errors/';
 
 puppeteer.use(pluginStealth());
 
-async function crawlPage(execPath, protocol, url, timeout) {
-    const browser = await puppeteer.launch(
-        { executablePath: execPath
-        , dumpio: false
-        , args: brave_args
-        , headless: true
-        }
-    );
-
+function tryGetImagesOnPage(page, protocol, url, timeout) {
     const imagesFolderPath = __dirname + `/images/${url}/`;
-    const errorsFolderPath = __dirname + '/errors/';
-
-    console.log(url);
 
     let imageData = {};
     let imageNbr = 0;
-    let [page] = await browser.pages();
     let pageWorked = true;
-    page.on(
-        'error',
-        err => { 
-            pageWorked = false;
-            console.log('---- error for ' + url + ': ' + err);
-            fs.writeFileSync(errorsFolderPath + url + '.error', err);
-        }
-    );
 
-    page.on(
-        'response',
-        async response => {
-            if (response.ok()) {
-                const request = response.request();
-                if (request.resourceType() === 'image') {
-                    const responseHeaders = response.headers();
-                    if (responseHeaders['content-length'] === 'undefined' ||
-                            responseHeaders['content-length'] === '0') {
-                        return;
-                    }
+    return new Promise(async (resolve, reject) => {
+        page.on(
+            'error',
+            err => { 
+                pageWorked = false;
+                reject(err);
+            }
+        );
 
-                    await Promise.race([
+        page.on(
+            'response',
+             response => {
+                if (response.ok()) {
+                    const request = response.request();
+                    if (request.resourceType() === 'image') {
+                        const responseHeaders = response.headers();
+                        if (responseHeaders['content-length'] === 'undefined' ||
+                                responseHeaders['content-length'] === '0') {
+                            return;
+                        }
+    
                         response.buffer().then(content => {
                             if (!fs.existsSync(imagesFolderPath)) {
                                 fs.mkdirSync(imagesFolderPath);
                             }
-
+    
                             let fileExtension = responseHeaders['content-type'] ?
                                 mime.extension(responseHeaders['content-type']) : undefined;
                             if (fileExtension === undefined) {
@@ -76,12 +64,12 @@ async function crawlPage(execPath, protocol, url, timeout) {
                                     fileExtension = actualFileType.ext;
                                 }
                             }
-
+    
                             const filePath = imagesFolderPath + `${imageNbr}.${fileExtension}`;
                             imageNbr++;
                             const writeStream = fs.createWriteStream(filePath);
                             writeStream.write(content);
-
+    
                             const responseFrame = response.frame();
                             imageData[`${imageNbr}.${fileExtension}`] = {
                                 url: response.url(),
@@ -94,32 +82,31 @@ async function crawlPage(execPath, protocol, url, timeout) {
                                     .catch(_err => null),
                                 frameUrl: responseFrame.url()
                             };
-                        }),
-                        new Promise((resolve, _reject) => setTimeout(resolve, responseTimeout))
-                    ])
+                        })
+                        .catch(err => {
+                            console.log('a weird error... ', err);
+                        });
+                    }
                 }
             }
-        }
-    );
+        );
 
-    await page.goto(protocol + url, { waitUntil: 'networkidle0', timeout: timeout })
-        .then(async response => {
+        try {
+            let response = await page.goto(protocol + url, { waitUntil: 'networkidle0', timeout: timeout });
             if (response === null) {
                 // response sometimes get null, then wait for it again
                 console.log('response was null');
-                return;
-                //response = await page.waitForResponse(() => true);
+                response = await page.waitForResponse(() => true);
             }
-
-            if (response.ok()) {
+            if (response.ok() && pageWorked) {
                 const devtools = await page.target().createCDPSession();
                 const graphml = await devtools.send('Page.generatePageGraph');
                 fs.writeFileSync('graphml/' + url + '.graphml', graphml.data);
 
                 /* 
-                 * All image responses for the main frame should have been captured
-                 * here, so next step is to go through all subframes
-                 */
+                    * All image responses for the main frame should have been captured
+                    * here, so next step is to go through all subframes
+                    */
                 let childFrames = await page.mainFrame().childFrames();
                 while (childFrames.length != 0) {
                     const childFrame = childFrames.pop();
@@ -163,29 +150,47 @@ async function crawlPage(execPath, protocol, url, timeout) {
                 }
 
                 fs.writeFileSync(imagesFolderPath + 'image_data.json', JSON.stringify(imageData));
-                await page.close();
             } else {
                 fs.writeFileSync('response_errors.log', url + ': ' + response.status() + '\n', { flag: 'a' });
             }
-        })
+            resolve(true);
+        } catch(err) {
+            if (pageWorked && err instanceof puppeteer_original.errors.TimeoutError) {
+                console.log('received timeout for: ' + url);
+                fs.writeFileSync('timeouts.log', url + '\n', { flag: 'a' });
+                resolve(false);
+            } else if (pageWorked) {
+                console.log('Got an unknown error for: ' + url + ': ' + err);
+                fs.writeFileSync(errorsFolderPath + url + '.error', err);
+                resolve(false);
+            }
+        } finally {
+            if (pageWorked) {
+                await page.close()
+            }
+        }
+    });
+}
+
+async function crawlPage(execPath, protocol, url, timeout) {
+    const browser = await puppeteer.launch(
+        { executablePath: execPath
+        , dumpio: false
+        , args: brave_args
+        , headless: true
+        }
+    );
+
+    console.log(url);
+
+    let [page] = await browser.pages();
+    const result = await tryGetImagesOnPage(page, protocol, url, timeout)
         .catch(err => {
-            if (err instanceof puppeteer_original.errors.TimeoutError) {
-                if (pageWorked) {
-                    console.log('received timeout for: ' + url);
-                    fs.writeFileSync('timeouts.log', url + '\n', { flag: 'a' });
-                }
-            } else {
-                if (pageWorked) {
-                    console.log('Got an unknown error for: ' + url + ': ' + err);
-                    fs.writeFileSync(errorsFolderPath + url + '.error', err);
-                }
-            }
-        })
-        .finally(() => {
-            if (!pageWorked) {
-                // if page didn't work, remove all the files
-                fs.remove(imagesFolderPath);
-            }
+            // page crashed! Then log it, and remove the images
+            console.log('---- error for ' + url + ': ' + err);
+            fs.writeFileSync(errorsFolderPath + url + '.error', err);
+            const imageFolder = __dirname + `/images/${url}`;
+            fs.removeSync(imageFolder)
         });
 
     await browser.close();
