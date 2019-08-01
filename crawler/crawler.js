@@ -1,7 +1,7 @@
 const puppeteer_original = require('puppeteer');
 const puppeteer = require("puppeteer-extra");
 const pluginStealth = require("puppeteer-extra-plugin-stealth");
-const fs = require('fs');
+const fs = require('fs-extra');
 const ArgumentParser = require('argparse').ArgumentParser;
 const mime = require("mime-types");
 const fileType = require('file-type');
@@ -10,32 +10,6 @@ const fileType = require('file-type');
 const userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/76.0.3809.72 Safari/537.36";
 
 const brave_args = [
-    /*'--ignore-certificate-errors',
-    '--disable-background-networking',
-    '--disable-background-timer-throttling',
-    '--disable-backgrounding-occluded-windows',
-    '--disable-breakpad',
-    '--disable-client-side-phishing-detection',
-    '--disable-default-apps',
-    '--disable-dev-shm-usage',
-    '--disable-extensions',
-    '--disable-features=site-per-process,TranslateUI,BlinkGenPropertyTrees',
-    '--disable-hang-monitor',
-    '--disable-ipc-flooding-protection',
-    '--disable-popup-blocking',
-    '--disable-prompt-on-repost',
-    '--disable-renderer-backgrounding',
-    '--disable-sync',
-    '--force-color-profile=srgb',
-    '--metrics-recording-only',
-    '--no-first-run',
-    '--enable-automation',
-    '--password-store=basic',
-    '--use-mock-keychain',
-    '--hide-scrollbars',
-    '--mute-audio',
-    'about:blank',
-    '--remote-debugging-port=0',*/
     '--user-agent=' + userAgent,
     '--incognito',
     '--user-data-dir-name=page_graph',
@@ -44,6 +18,8 @@ const brave_args = [
     '--enable-logging=stderr',
     '--no-sandbox'
 ];
+
+const responseTimeout = 5000;
 
 puppeteer.use(pluginStealth());
 
@@ -55,18 +31,22 @@ async function crawlPage(execPath, protocol, url, timeout) {
         , headless: true
         }
     );
-    let pageWorked = true;
+
+    const imagesFolderPath = __dirname + `/images/${url}/`;
+    const errorsFolderPath = __dirname + '/errors/';
 
     console.log(url);
+
+    let imageData = {};
     let imageNbr = 0;
     let [page] = await browser.pages();
+    let pageWorked = true;
     page.on(
         'error',
-        err => {
-            console.log('---- error for ' + url + ': ' + err);
-            fs.writeFileSync('errors/' + url + '.error', err);
+        err => { 
             pageWorked = false;
-            //page.close();
+            console.log('---- error for ' + url + ': ' + err);
+            fs.writeFileSync(errorsFolderPath + url + '.error', err);
         }
     );
 
@@ -81,26 +61,42 @@ async function crawlPage(execPath, protocol, url, timeout) {
                             responseHeaders['content-length'] === '0') {
                         return;
                     }
-                    await response.buffer().then(content => {
-                        const path = __dirname + `/images/${url}`;
-                        if (!fs.existsSync(path)) {
-                            fs.mkdirSync(path);
-                        }
 
-                        let fileExtension = responseHeaders['content-type'] ?
-                            mime.extension(responseHeaders['content-type']) : undefined;
-                        if (fileExtension === undefined) {
-                            const actualFileType = fileType(content.slice(0, fileType.minimumBytes));
-                            if (actualFileType) {
-                                fileExtension = actualFileType.ext;
+                    await Promise.race([
+                        response.buffer().then(content => {
+                            if (!fs.existsSync(imagesFolderPath)) {
+                                fs.mkdirSync(imagesFolderPath);
                             }
-                        }
 
-                        const filePath = path + `/${imageNbr}.${fileExtension}`;
-                        imageNbr++;
-                        const writeStream = fs.createWriteStream(filePath);
-                        writeStream.write(content);
-                    });
+                            let fileExtension = responseHeaders['content-type'] ?
+                                mime.extension(responseHeaders['content-type']) : undefined;
+                            if (fileExtension === undefined) {
+                                const actualFileType = fileType(content.slice(0, fileType.minimumBytes));
+                                if (actualFileType) {
+                                    fileExtension = actualFileType.ext;
+                                }
+                            }
+
+                            const filePath = imagesFolderPath + `${imageNbr}.${fileExtension}`;
+                            imageNbr++;
+                            const writeStream = fs.createWriteStream(filePath);
+                            writeStream.write(content);
+
+                            const responseFrame = response.frame();
+                            imageData[`${imageNbr}.${fileExtension}`] = {
+                                url: response.url(),
+                                data: content,
+                                frameId: responseFrame.evaluate(
+                                    () => this.frameElement.getAttribute('id'))
+                                    .catch(_err => null),
+                                frameName: responseFrame.evaluate(
+                                    () => this.frameElement.getAttribute('name'))
+                                    .catch(_err => null),
+                                frameUrl: responseFrame.url()
+                            };
+                        }),
+                        new Promise((resolve, _reject) => setTimeout(resolve, responseTimeout))
+                    ])
                 }
             }
         }
@@ -110,9 +106,12 @@ async function crawlPage(execPath, protocol, url, timeout) {
         .then(async response => {
             if (response === null) {
                 // response sometimes get null, then wait for it again
-                response = await chromePage.waitForResponse(() => true);
+                console.log('response was null');
+                return;
+                //response = await page.waitForResponse(() => true);
             }
-            if (pageWorked && response.ok()) {
+
+            if (response.ok()) {
                 const devtools = await page.target().createCDPSession();
                 const graphml = await devtools.send('Page.generatePageGraph');
                 fs.writeFileSync('graphml/' + url + '.graphml', graphml.data);
@@ -137,7 +136,7 @@ async function crawlPage(execPath, protocol, url, timeout) {
                     const frameBoundingBox = await frameBody.boundingBox();
                     if (frameBoundingBox !== null && frameBoundingBox.width > 0
                             && frameBoundingBox.height > 0) {
-                        const filePath = __dirname + `/images/${url}/${imageNbr}.png`;
+                        const filePath = imagesFolderPath + `${imageNbr}.png`;
                         imageNbr++;
                         await page.screenshot({
                             path: filePath,
@@ -148,34 +147,52 @@ async function crawlPage(execPath, protocol, url, timeout) {
                                 height: Math.ceil(frameBoundingBox.height)
                             }
                         });
+
+                        imageData[`${imageNbr}.png`] = {
+                            url: url,
+                            data: filePath,
+                            frameId: childFrame.evaluate(
+                                () => this.frameElement.getAttribute('id'))
+                                .catch(_err => null),
+                            frameName: childFrame.evaluate(
+                                () => this.frameElement.getAttribute('name'))
+                                .catch(_err => null),
+                            frameUrl: childFrame.url()
+                        };
                     }
                 }
-            } else if (pageWorked) {
+
+                fs.writeFileSync(imagesFolderPath + 'image_data.json', JSON.stringify(imageData));
+                await page.close();
+            } else {
                 fs.writeFileSync('response_errors.log', url + ': ' + response.status() + '\n', { flag: 'a' });
             }
         })
         .catch(err => {
             if (err instanceof puppeteer_original.errors.TimeoutError) {
-                if (pageWorked) { // Only log as timeout errors if the page didn't crash
+                if (pageWorked) {
                     console.log('received timeout for: ' + url);
                     fs.writeFileSync('timeouts.log', url + '\n', { flag: 'a' });
                 }
             } else {
                 if (pageWorked) {
                     console.log('Got an unknown error for: ' + url + ': ' + err);
-                    fs.writeFileSync('errors/' + url + '.error', err);
+                    fs.writeFileSync(errorsFolderPath + url + '.error', err);
                 }
+            }
+        })
+        .finally(() => {
+            if (!pageWorked) {
+                // if page didn't work, remove all the files
+                fs.remove(imagesFolderPath);
             }
         });
 
-    if (pageWorked) {
-        await page.close();
-    }
     await browser.close();
 }
 
 (async () => {
-    const inputFile = fs.readFileSync('top-1m.csv', 'utf-8')
+    const inputFile = fs.readFileSync('/Users/asjosten/regional-filterlist-gen/crawler/top-1m.csv', 'utf-8')
         .split('\n')
         .filter(Boolean);
 
@@ -200,5 +217,6 @@ async function crawlPage(execPath, protocol, url, timeout) {
         await crawlPage(brave_path, 'http://', url, timeout * 1000);
     }
 
+    //await crawlPage(brave_path, 'http://', 'sina.com.cn', timeout * 1000);
     console.log(`Time elapsed ${Math.round((new Date().getTime() - startDate) / 1000)} s`);
 })();
