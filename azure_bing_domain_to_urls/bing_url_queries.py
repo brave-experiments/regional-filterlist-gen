@@ -69,8 +69,6 @@ def query_domains(input_file, output_file, urls_to_fetch, max_domains, first_dom
 
             domains_counter += 1
             domain = domain.strip()
-            # line is rank,domain
-            domain = domain.split(',')[1]
 
             print("Currently at {0}, on count {1}".format(domain, domains_counter))
             result = get_urls_for_domain(domain, urls_to_fetch, retries_per_domain, retries_delay, api_key)

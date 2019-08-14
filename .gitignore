@@ -1,3 +1,6 @@
+azure_bing_domain_to_urls/output.json
+azure_bing_domain_to_urls/test_pages
+
 crawler/graphml
 crawler/errors
 crawler/images
@@ -8,3 +11,5 @@ crawler/response_errors.log
 
 .DS_Store
 *.graphml
+
+.vscode
