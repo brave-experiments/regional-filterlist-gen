@@ -25,9 +25,9 @@ async function postgresInsertImageData(data) {
     pool.query(sql`${sql.raw(query.text, query.args)}`)
         .catch(err => {
             fs.writeFileSync(
-                file_error_path + slugify(data.page_url),
+                path.join(file_error_path, slugify(data.page_url)),
                 "Error inserting image resource into the database: " + err.stack,
-                'a'
+                {flag: 'a'}
             )
         });
 }
@@ -37,9 +37,9 @@ async function postgresInsertGraphMLMapping(mapping) {
     pool.query(sql`${sql.raw(query.text, query.args)}`)
         .catch(err => {
             fs.writeFileSync(
-                file_error_path + slugify(mapping.page_url),
+                path.join(file_error_path, slugify(mapping.page_url)),
                 "Error inserting graphml mapping into the database: " + err.stack,
-                'a'
+                {flag: 'a'}
             )
         });
 }
@@ -49,9 +49,10 @@ async function postgresInsertError(error) {
     pool.query(sql`${sql.raw(query.text, query.args)}`)
         .catch(err => {
             fs.writeFileSync(
-                file_error_path + slugify(error.page_url),
+                path.join(file_error_path, slugify(error.page_url)),
                 "Error inserting error into the database: " + err.stack,
-                'a')
+                {flag: 'a'}
+            )
         });
 }
 
