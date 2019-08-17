@@ -1,15 +1,15 @@
 azure_bing_domain_to_urls/output.json
 azure_bing_domain_to_urls/test_pages
 
+crawler/database-errors
 crawler/graphml
-crawler/errors
-crawler/images
 crawler/node_modules
-crawler/timeouts.log
-crawler/top-1m.csv
 crawler/response_errors.log
 crawler/run_crawl.sh
 crawler/run_local_crawl.sh
+crawler/run_very_local_crawl.sh
+crawler/timeouts.log
+crawler/top-1m.csv
 
 adblock-rust-checking/node_modules
 
