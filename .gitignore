@@ -9,6 +9,9 @@ crawler/timeouts.log
 crawler/top-1m.csv
 crawler/response_errors.log
 crawler/run_crawl.sh
+crawler/run_local_crawl.sh
+
+adblock-rust-checking/node_modules
 
 .DS_Store
 *.graphml
