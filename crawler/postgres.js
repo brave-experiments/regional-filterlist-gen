@@ -17,7 +17,7 @@ const pool = createPool(process.env.PG_CONNECTION_STRING, ClientConfigurationTyp
 const imageDataTable = 'image_data_table'
 const graphmlMappingTable = 'graphml_mappings';
 const errorsTable = 'errors';
-const file_error_path = path.join(__dirname, 'database-errors');
+const file_error_path = path.join(__dirname, process.env.PG_DATABASE_ERROR_FOLDER);
 
 async function postgresInsertImageData(data) {
     const query = sq.from(imageDataTable).insert(data).query;

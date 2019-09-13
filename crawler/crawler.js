@@ -18,12 +18,21 @@ let s3PageGraphBucket;
 const s3Options = process.env.AWS_ENDPOINT ? {endpoint: process.env.AWS_ENDPOINT, s3ForcePathStyle: true} : {};
 const s3Server = new S3(s3Options);
 
+// constant for waiting for the frames to load on a page (30 seconds)
+const WAIT_FOR_FRAMES_LOAD = 30000;
+
+// constant for waiting for potential lingering requests (3 seconds)
+const WAIT_FOR_LINGERING_REQUESTS = 3000;
+
+// foldername for the s3 buckets
+let s3FolderName = '';
+
 // the user agent for the brave binary
 const userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/76.0.3809.72 Safari/537.36";
 
 const brave_args = [
     '--user-agent=' + userAgent,
-    '--lang=si',
+    '--lang=si,ta',
     '--incognito',
     '--user-data-dir-name=page_graph',
     '--v=0',
@@ -34,65 +43,67 @@ const brave_args = [
 
 puppeteer.use(pluginStealth());
 
-function tryGetImagesOnPage(page, domain, url, isTopPage, timeout) {
+function tryGetImagesOnPage(page, domain, url, timeout) {
     if (page) {
         console.log('visiting: ', url);
         let pageWorked = true;
 
         return new Promise(async (resolve, reject) => {
-            if (isTopPage) {
-                page.on(
-                    'error',
-                    async err => {
-                        console.log('page crashed..');
-                        pageWorked = false;
-                        // page crashed! Then log it..
-                        const entry = {
-                            page_url: url,
-                            error_page_crash: true
-                        };
-                        await postgresInsertError(entry);
-                        reject(err);
-                    }
-                );
+            page.on(
+                'error',
+                async err => {
+                    console.log('page crashed..');
+                    pageWorked = false;
+                    // page crashed! Then log it..
+                    const entry = {
+                        page_url: url,
+                        error_page_crash: true
+                    };
+                    await postgresInsertError(entry);
+                    reject(err);
+                }
+            );
 
-                page.on(
-                    'response',
-                    response => {
-                        if (response.ok() && response.status !== 204 && response.status !== 205) {
-                            const request = response.request();
-                            if (request.resourceType() === 'image') {
-                                const responseHeaders = response.headers();
-                                if (responseHeaders['content-length'] === 'undefined' ||
-                                        responseHeaders['content-length'] === '0') {
-                                    return;
+            page.on(
+                'response',
+                response => {
+                    if (response.ok() && response.status !== 204 && response.status !== 205) {
+                        const request = response.request();
+                        if (request.resourceType() === 'image') {
+                            const responseHeaders = response.headers();
+                            if (responseHeaders['content-length'] === 'undefined' ||
+                                    responseHeaders['content-length'] === '0') {
+                                return;
+                            }
+
+                            response.buffer().then(async content => {
+                                let fileExtension = responseHeaders['content-type'] ?
+                                    mime.extension(responseHeaders['content-type']) : undefined;
+                                if (fileExtension === undefined) {
+                                    const actualFileType = fileType(content.slice(0, fileType.minimumBytes));
+                                    if (actualFileType) {
+                                        fileExtension = actualFileType.ext;
+                                    }
                                 }
 
-                                response.buffer().then(async content => {
-                                    let fileExtension = responseHeaders['content-type'] ?
-                                        mime.extension(responseHeaders['content-type']) : undefined;
-                                    if (fileExtension === undefined) {
-                                        const actualFileType = fileType(content.slice(0, fileType.minimumBytes));
-                                        if (actualFileType) {
-                                            fileExtension = actualFileType.ext;
-                                        }
-                                    }
+                                const responseFrame = response.frame();
+                                const parentFrame = responseFrame.parentFrame();
+                                const resourceUrl = response.url();
+                                const sha1ResourceUrl = resourceUrl ? `x${sha1(resourceUrl)}` : undefined;
+                                const fileName = fileExtension ?
+                                    path.join(s3FolderName, 'images', `${domain}_${sha1ResourceUrl}.${fileExtension}`) :
+                                    path.join(s3FolderName, 'images', `${domain}_${sha1ResourceUrl}`);
 
-                                    const responseFrame = response.frame();
-                                    const parentFrame = responseFrame.parentFrame();
-                                    const resourceUrl = response.url();
-                                    const sha1ResourceUrl = resourceUrl ? `x${sha1(resourceUrl)}` : undefined;
-                                    const fileName = fileExtension ?
-                                        path.join('filterlist-gen', 'images', `${domain}_${sha1ResourceUrl}.${fileExtension}`) :
-                                        path.join('filterlist-gen', 'images', `${domain}_${sha1ResourceUrl}`);
+                                const filePath = 's3://' + path.join(s3ImagesBucket, fileName);
 
-                                    const filePath = 's3://' + path.join(s3ImagesBucket, fileName);
-
+                                const is_local_frame = await responseFrame.evaluate('window.parent.location.host; true').catch(_err => false);
+                                if (is_local_frame) {
                                     const imageData = {
                                         domain: domain,
                                         page_url: url,
                                         frame_id: await responseFrame.evaluate(() => this.frameElement.getAttribute('id')).catch(_err => null),
                                         frame_name: await responseFrame.evaluate(() => this.frameElement.getAttribute('name')).catch(_err => null),
+                                        is_local_frame: is_local_frame,
                                         parent_frame_id: parentFrame ?
                                             await parentFrame.evaluate(() => this.frameElement.getAttribute('id')).catch(_err => null)
                                             : null,
@@ -107,39 +118,34 @@ function tryGetImagesOnPage(page, domain, url, isTopPage, timeout) {
                                         sha1_resource_url: sha1ResourceUrl
                                     };
 
-                                    await postgresInsertImageData(imageData);
                                     s3Server.putObject({
                                         Bucket: s3ImagesBucket,
                                         Key: fileName,
                                         Body: content
-                                    }).promise().catch(err => console.log(err));
-                                })
-                                /*.catch(err => {
-                                    console.log('a weird error... ', err);
-                                });*/
-                            }
+                                    }).promise().catch(_err => imageData.s3_insertion_error = true);
+
+                                    await postgresInsertImageData(imageData);
+                                }
+                            })
                         }
                     }
-                );
+                }
+            );
 
-                await page.setExtraHTTPHeaders({
-                    'Accept-Language': 'si'
-                });
-                await page.setGeolocation({
-                    latitude: 6.92, longitude: 79.86
-                });
-                await page.setViewport({
-                    width: 1680, height: 1050
-                });
-            }
+            await page.setViewport({
+                width: 1680, height: 1050
+            });
 
             try {
                 const response = await page.goto(url, { waitUntil: 'networkidle0', timeout: timeout });
                 if (response !== null && response.ok() && pageWorked) {
                     /* 
                     * All image responses for the main frame should have been captured
-                    * here, so next step is to go through all subframes
+                    * here, so next step is to go through all subframes.
+                    * However, to be safe, we start by allowing 30 seconds to have
+                    * as much as possible loaded.
                     */
+                    await sleep(WAIT_FOR_FRAMES_LOAD)
                     let childFrames = await page.mainFrame().childFrames();
                     while (childFrames.length != 0) {
                         const childFrame = childFrames.pop();
@@ -159,9 +165,10 @@ function tryGetImagesOnPage(page, domain, url, isTopPage, timeout) {
 
                             const frameUrl = childFrame.url();
                             const sha1ResourceUrl = frameUrl ? `x${sha1(frameUrl)}` : undefined;
-                            const fileName = path.join('filterlist-gen', 'frames', `${domain}_${sha1ResourceUrl}.png`);
+                            const fileName = path.join(s3FolderName, 'frames', `${domain}_${sha1ResourceUrl}.png`);
                             const filePath = 's3://' + path.join(s3ImagesBucket, fileName);
 
+                            let insertionError = false;
                             await page.screenshot({
                                 clip: {
                                     x: frameBoundingBox.x,
@@ -173,7 +180,7 @@ function tryGetImagesOnPage(page, domain, url, isTopPage, timeout) {
                                 Bucket: s3ImagesBucket,
                                 Key: fileName,
                                 Body: screenshot
-                            }).promise().catch(err => console.log(err)));
+                            }).promise().catch(err => insertionError = true));
 
                             const parentFrame = childFrame.parentFrame();
                             const imageData = {
@@ -187,33 +194,35 @@ function tryGetImagesOnPage(page, domain, url, isTopPage, timeout) {
                                 resource_type: 'iframe',
                                 resource_url: frameUrl,
                                 imaged_data: filePath,
-                                sha1_resource_url: sha1ResourceUrl
+                                sha1_resource_url: sha1ResourceUrl,
+                                s3_insertion_error: insertionError
                             };
 
                             await postgresInsertImageData(imageData);
                         }
                     }
 
-                    // allow for any lingering requests...
-                    await sleep(2500)
-
                     // then fix the graphml file
                     const devtools = await page.target().createCDPSession();
                     const graphml = await devtools.send('Page.generatePageGraph');
                     const sha1_url = sha1(url);
-                    const graphmlFileName = path.join('filterlist-gen', `${domain}-${sha1_url}_${new Date().toISOString()}.graphml`);
+                    const graphmlFileName = path.join(s3FolderName, `${domain}-${sha1_url}_${new Date().toISOString()}.graphml`);
 
-                    const graphmlEntry = {
-                        file_name: graphmlFileName,
-                        page_url: url
-                    };
-
-                    await postgresInsertGraphMLMapping(graphmlEntry);
+                    let graphmlInsertionError = false;
                     s3Server.putObject({
                         Bucket: s3PageGraphBucket,
                         Key: graphmlFileName,
                         Body: graphml.data
-                    }).promise().catch(err => console.log(err));
+                    }).promise().catch(err => graphmlInsertionError = true);
+
+                    const graphmlEntry = {
+                        file_name: graphmlFileName,
+                        queried_url: url,
+                        page_url: page.url(),
+                        s3_insertion_error: graphmlInsertionError
+                    };
+
+                    await postgresInsertGraphMLMapping(graphmlEntry);
 
                     resolve(true);
                 } else {
@@ -221,12 +230,30 @@ function tryGetImagesOnPage(page, domain, url, isTopPage, timeout) {
                 }
             } catch(err) {
                 if (pageWorked && err instanceof puppeteer_original.errors.TimeoutError) {
-                    // timeout, so let's log...
-                    const entry = {
-                        page_url: url,
-                        error_timeout: true
+                    /* 
+                     * Timeout, so let's just dump the page graph file
+                     * We will most certainly miss frames here..
+                     */
+                    const devtools = await page.target().createCDPSession();
+                    const graphml = await devtools.send('Page.generatePageGraph');
+                    const sha1_url = sha1(url);
+                    const graphmlFileName = path.join(s3FolderName, `${domain}-${sha1_url}_${new Date().toISOString()}.graphml`);
+
+                    let graphmlInsertionError = false;
+                    s3Server.putObject({
+                        Bucket: s3PageGraphBucket,
+                        Key: graphmlFileName,
+                        Body: graphml.data
+                    }).promise().catch(err => graphmlInsertionError = true);
+
+                    const graphmlEntry = {
+                        file_name: graphmlFileName,
+                        queried_url: url,
+                        page_url: page.url(),
+                        s3_insertion_error: graphmlInsertionError
                     };
-                    await postgresInsertError(entry);
+
+                    await postgresInsertGraphMLMapping(graphmlEntry);
                 }
 
                 resolve(false);
@@ -246,7 +273,7 @@ async function crawlSpecificPage(execPath, domain, url, timeout) {
 
     let [page] = await browser.pages();
     const result = await Promise.race([
-        tryGetImagesOnPage(page, domain, url, true, timeout)
+        tryGetImagesOnPage(page, domain, url, timeout)
             .catch(_err => {
                 return false;
         }),
@@ -268,16 +295,17 @@ async function crawlPage(execPath, domain, protocol, timeout) {
     const resultObject = await crawlSpecificPage(execPath, domain, protocol + domain, timeout);
 
     // Lingering requests...
-    await sleep(2500);
+    await sleep(WAIT_FOR_LINGERING_REQUESTS);
 
     if (resultObject.result === true) {
-        const children = await getChildrenLinks(resultObject.page, 10);
+        const children = await getChildrenLinks(resultObject.page, 4)
+            .catch(_err => { return [] });
         await resultObject.page.close();
         await resultObject.browser.close();
 
         await async.eachSeries(children, async (url) => {
             const childResultObject = await crawlSpecificPage(execPath, domain, url, timeout);
-            await sleep(2500);
+            await sleep(WAIT_FOR_LINGERING_REQUESTS);
             if (childResultObject.page) {
                 await childResultObject.page.close();
             }
@@ -319,10 +347,6 @@ async function getChildrenLinks(page, children) {
 }
 
 (async () => {
-    const inputFile = fs.readFileSync('/Users/asjosten/regional-filterlist-gen/alexa-lk-top-1-2000-20190812.txt', 'utf-8')
-        .split('\n')
-        .filter(Boolean);
-
     const argParser = new ArgumentParser({ addHelp: true });
     argParser.addArgument(
         ['-bp', '--brave-path'],
@@ -340,16 +364,31 @@ async function getChildrenLinks(page, children) {
         ['-s3p'],
         {help: 'AWS endpoint for pagegraph storage'}
     );
+    argParser.addArgument(
+        ['-s3f'],
+        {help: 'Folder name for the S3 bucket'}
+    );
+    argParser.addArgument(
+        ['-d', '--domains'],
+        {help: 'Path to file with the domains to crawl'}
+    );
 
     const args = argParser.parseArgs();
     const brave_path = args.brave_path;
     const timeout = args.timeout;
     s3ImagesBucket = args.s3i;
     s3PageGraphBucket = args.s3p;
+    s3FolderName = args.s3f;
+
+    console.log(args.domains);
+    const inputFile = fs.readFileSync(args.domains, 'utf-8')
+        .split('\n')
+        .filter(Boolean);
 
     const startDate = new Date().getTime();
     for (let i = 0; i < inputFile.length; i++) {
         // structure of inputFile[i] is (rank,url), so we must remove the rank
+        //let [_rank, domain] = inputFile[i].trim().split(',');
         let domain = inputFile[i].trim();
         await crawlPage(brave_path, domain, 'http://', timeout * 1000);
     }

@@ -10,6 +10,7 @@ CREATE TABLE image_data_table (
   page_url text,
   frame_id text,
   frame_name text,
+  is_local_frame boolean default true,
   parent_frame_id text,
   parent_frame_name text,
   frame_url text,
@@ -19,8 +20,12 @@ CREATE TABLE image_data_table (
   content_length bigint default null,
   sha1_resource_url bit(160) default null,
   is_classified_as_ad boolean default null,
+  is_classified_as_ad_easylist boolean default false,
+  is_classified_as_ad_supplement boolean default false,
+  is_classified_as_ad_easyprivacy boolean default false,
   is_one_by_one_pixel boolean default false,
   has_been_classified boolean default false,
+  s3_insertion_error boolean default false,
   date date default now()
 );
 
@@ -28,7 +33,6 @@ CREATE TABLE image_data_table (
 CREATE TABLE errors (
   id bigserial primary key,
   page_url text,
-  error_timeout boolean default false,
   error_page_crash boolean default false,
   error_failsafe_timeout boolean default false,
   date date default now()
@@ -38,6 +42,8 @@ CREATE TABLE errors (
 CREATE TABLE graphml_mappings (
     id bigserial primary key,
     file_name text,
+    queried_url text,
     page_url text,
+    s3_insertion_error boolean default false,
     date date default now()
 );
