@@ -14,7 +14,7 @@ CREATE TABLE image_data_table (
   is_local_frame boolean default true,
   parent_frame_id text,
   parent_frame_name text,
-  parent_url text,
+  parent_frame_url text,
   resource_type text,
   resource_url text,
   imaged_data text, -- uri of the image file with the image or iframe screenshot
