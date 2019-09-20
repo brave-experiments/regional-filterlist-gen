@@ -18,6 +18,12 @@ let s3PageGraphBucket;
 const s3Options = process.env.AWS_ENDPOINT ? {endpoint: process.env.AWS_ENDPOINT, s3ForcePathStyle: true} : {};
 const s3Server = new S3(s3Options);
 
+// default viewport...
+const defaultViewport = {
+    width: 1920,
+    height: 1280
+};
+
 // constant for waiting for the frames to load on a page (30 seconds)
 const WAIT_FOR_FRAMES_LOAD = 30000;
 
@@ -42,6 +48,92 @@ const brave_args = [
 ];
 
 puppeteer.use(pluginStealth());
+
+async function traverseFrames(frames, url, domain) {
+    while (frames.length != 0) {
+        const frame = frames.pop();
+        if (frame.isDetached()) {
+            continue;
+        }
+
+        let children = frame.childFrames();
+        frames = frames.concat(children);
+        const frameBody = await frame.$('body');
+        if (frameBody === null) {
+            continue;
+        }
+
+        // no need to screenshot frames which are either 0 in width or height
+        const frameBoundingBox = await frameBody.boundingBox();
+        if (frameBoundingBox !== null && frameBoundingBox.width > 0
+                && frameBoundingBox.height > 0) {
+
+            const frameUrl = frame.url();
+            const sha1ResourceUrl = frameUrl ? `x${sha1(frameUrl)}` : undefined;
+            const fileName = path.join(s3FolderName, 'frames', `${domain}_${sha1ResourceUrl}.png`);
+            const filePath = 's3://' + path.join(s3ImagesBucket, fileName);
+
+            let insertionError = false;
+            await frameBody.screenshot().then(screenshot => s3Server.putObject({
+                Bucket: s3ImagesBucket,
+                Key: fileName,
+                Body: screenshot
+            }).promise().catch(_err => insertionError = true));
+
+            const parentFrame = frame.parentFrame();
+            const imageData = {
+                domain: domain,
+                page_url: url,
+                frame_id: await frame.evaluate(() => this.frameElement.getAttribute('id')).catch(_err => null),
+                frame_name: await frame.evaluate(() => this.frameElement.getAttribute('name')).catch(_err => null),
+                frame_url: frame.url(),
+                parent_frame_id: parentFrame ? await parentFrame.evaluate(() => this.frameElement.getAttribute('id')).catch(_err => null) : null,
+                parent_frame_name: parentFrame ? await parentFrame.evaluate(() => this.frameElement.getAttribute('name')).catch(_err => null) : null,
+                parent_frame_url: parentFrame ? parentFrame.url() : null,
+                resource_type: 'iframe',
+                resource_url: frameUrl,
+                imaged_data: filePath,
+                sha1_resource_url: sha1ResourceUrl,
+                s3_insertion_error: insertionError
+            };
+
+            await postgresInsertImageData(imageData);
+        }
+    }
+}
+
+async function dumpPageGraph(page, url, domain) {
+    const devtools = await page.target().createCDPSession();
+    const graphml = await devtools.send('Page.generatePageGraph');
+    const sha1_url = sha1(url);
+    const graphmlFileName = path.join(s3FolderName, `${domain}-${sha1_url}_${new Date().toISOString()}.graphml`);
+
+    let graphmlInsertionError = false;
+    s3Server.putObject({
+        Bucket: s3PageGraphBucket,
+        Key: graphmlFileName,
+        Body: graphml.data
+    }).promise().catch(_err => graphmlInsertionError = true);
+
+    const graphmlEntry = {
+        file_name: graphmlFileName,
+        queried_url: url,
+        page_url: page.url(),
+        s3_insertion_error: graphmlInsertionError
+    };
+
+    await postgresInsertGraphMLMapping(graphmlEntry);
+}
+
+async function setViewport(page) {
+    const bodyHandle = await page.$('body');
+    const boundingBox = await bodyHandle.boundingBox();
+    const pageViewport = {
+        width: Math.max(defaultViewport.width, Math.ceil(boundingBox.width)),
+        height: Math.max(defaultViewport.height, Math.ceil(boundingBox.height)),
+    };
+    await page.setViewport(Object.assign({}, defaultViewport, pageViewport));
+}
 
 function tryGetImagesOnPage(page, domain, url, timeout) {
     if (page) {
@@ -132,10 +224,6 @@ function tryGetImagesOnPage(page, domain, url, timeout) {
                 }
             );
 
-            await page.setViewport({
-                width: 1680, height: 1050
-            });
-
             try {
                 const response = await page.goto(url, { waitUntil: 'networkidle0', timeout: timeout });
                 if (response !== null && response.ok() && pageWorked) {
@@ -145,84 +233,20 @@ function tryGetImagesOnPage(page, domain, url, timeout) {
                     * However, to be safe, we start by allowing 30 seconds to have
                     * as much as possible loaded.
                     */
-                    await sleep(WAIT_FOR_FRAMES_LOAD)
+                    await sleep(WAIT_FOR_FRAMES_LOAD);
+
+                    /* Before taking screenshots, modify the viewport, since
+                     * screenshots will be blank if the elements are outside
+                     * the viewport
+                     */
+                    await setViewport(page);
+
+                    // then traverse the frames and take screenshots
                     let childFrames = await page.mainFrame().childFrames();
-                    while (childFrames.length != 0) {
-                        const childFrame = childFrames.pop();
-                        if (childFrame.isDetached()) {
-                            continue;
-                        }
-
-                        let grandChildren = childFrame.childFrames();
-                        childFrames.concat(grandChildren);
-                        const frameBody = await childFrame.$('body');
-                        if (frameBody === null) {
-                            continue;
-                        }
-                        const frameBoundingBox = await frameBody.boundingBox();
-                        if (frameBoundingBox !== null && frameBoundingBox.width > 0
-                                && frameBoundingBox.height > 0) {
-
-                            const frameUrl = childFrame.url();
-                            const sha1ResourceUrl = frameUrl ? `x${sha1(frameUrl)}` : undefined;
-                            const fileName = path.join(s3FolderName, 'frames', `${domain}_${sha1ResourceUrl}.png`);
-                            const filePath = 's3://' + path.join(s3ImagesBucket, fileName);
-
-                            let insertionError = false;
-                            await page.screenshot({
-                                clip: {
-                                    x: frameBoundingBox.x,
-                                    y: frameBoundingBox.y,
-                                    width: Math.ceil(frameBoundingBox.width),
-                                    height: Math.ceil(frameBoundingBox.height)
-                                }
-                            }).then(screenshot => s3Server.putObject({
-                                Bucket: s3ImagesBucket,
-                                Key: fileName,
-                                Body: screenshot
-                            }).promise().catch(err => insertionError = true));
-
-                            const parentFrame = childFrame.parentFrame();
-                            const imageData = {
-                                domain: domain,
-                                page_url: url,
-                                frame_id: await childFrame.evaluate(() => this.frameElement.getAttribute('id')).catch(_err => null),
-                                frame_name: await childFrame.evaluate(() => this.frameElement.getAttribute('name')).catch(_err => null),
-                                parent_frame_id: await parentFrame.evaluate(() => this.frameElement.getAttribute('id')).catch(_err => null),
-                                parent_frame_name: await parentFrame.evaluate(() => this.frameElement.getAttribute('name')).catch(_err => null),
-                                frame_url: childFrame.url(),
-                                resource_type: 'iframe',
-                                resource_url: frameUrl,
-                                imaged_data: filePath,
-                                sha1_resource_url: sha1ResourceUrl,
-                                s3_insertion_error: insertionError
-                            };
-
-                            await postgresInsertImageData(imageData);
-                        }
-                    }
+                    await traverseFrames(childFrames, url, domain);
 
                     // then fix the graphml file
-                    const devtools = await page.target().createCDPSession();
-                    const graphml = await devtools.send('Page.generatePageGraph');
-                    const sha1_url = sha1(url);
-                    const graphmlFileName = path.join(s3FolderName, `${domain}-${sha1_url}_${new Date().toISOString()}.graphml`);
-
-                    let graphmlInsertionError = false;
-                    s3Server.putObject({
-                        Bucket: s3PageGraphBucket,
-                        Key: graphmlFileName,
-                        Body: graphml.data
-                    }).promise().catch(err => graphmlInsertionError = true);
-
-                    const graphmlEntry = {
-                        file_name: graphmlFileName,
-                        queried_url: url,
-                        page_url: page.url(),
-                        s3_insertion_error: graphmlInsertionError
-                    };
-
-                    await postgresInsertGraphMLMapping(graphmlEntry);
+                    await dumpPageGraph(page, url, domain);
 
                     resolve(true);
                 } else {
@@ -230,30 +254,15 @@ function tryGetImagesOnPage(page, domain, url, timeout) {
                 }
             } catch(err) {
                 if (pageWorked && err instanceof puppeteer_original.errors.TimeoutError) {
-                    /* 
-                     * Timeout, so let's just dump the page graph file
-                     * We will most certainly miss frames here..
-                     */
-                    const devtools = await page.target().createCDPSession();
-                    const graphml = await devtools.send('Page.generatePageGraph');
-                    const sha1_url = sha1(url);
-                    const graphmlFileName = path.join(s3FolderName, `${domain}-${sha1_url}_${new Date().toISOString()}.graphml`);
+                    // Timeout... first, set the viewport...
+                    await setViewport(page);
 
-                    let graphmlInsertionError = false;
-                    s3Server.putObject({
-                        Bucket: s3PageGraphBucket,
-                        Key: graphmlFileName,
-                        Body: graphml.data
-                    }).promise().catch(err => graphmlInsertionError = true);
+                    // then traverse the frames...
+                    let childFrames = await page.mainFrame().childFrames();
+                    await traverseFrames(childFrames, url, domain);
 
-                    const graphmlEntry = {
-                        file_name: graphmlFileName,
-                        queried_url: url,
-                        page_url: page.url(),
-                        s3_insertion_error: graphmlInsertionError
-                    };
-
-                    await postgresInsertGraphMLMapping(graphmlEntry);
+                    // and finally dump the graphml file
+                    await dumpPageGraph(page, url, domain);
                 }
 
                 resolve(false);
@@ -277,7 +286,7 @@ async function crawlSpecificPage(execPath, domain, url, timeout) {
             .catch(_err => {
                 return false;
         }),
-        new Promise((resolve, reject) => setTimeout(reject, timeout + 60000))
+        new Promise((resolve, reject) => setTimeout(reject, timeout + 180000))
     ]).catch(async _err => {
         // we timed out with the failsafe...
         const entry = {
