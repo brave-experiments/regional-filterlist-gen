@@ -11,7 +11,7 @@ CREATE TABLE image_data_table (
   frame_id text,
   frame_name text,
   frame_url text,
-  is_local_frame boolean default true,
+  is_local_frame boolean default false,
   parent_frame_id text,
   parent_frame_name text,
   parent_frame_url text,
@@ -20,6 +20,7 @@ CREATE TABLE image_data_table (
   imaged_data text, -- uri of the image file with the image or iframe screenshot
   content_length bigint default null,
   sha1_resource_url bit(160) default null,
+  random_identifier decimal,
   is_classified_as_ad boolean default null,
   is_classified_as_ad_easylist boolean default false,
   is_classified_as_ad_supplement boolean default false,

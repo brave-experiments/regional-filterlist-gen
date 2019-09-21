@@ -70,7 +70,8 @@ async function traverseFrames(frames, url, domain) {
 
             const frameUrl = frame.url();
             const sha1ResourceUrl = frameUrl ? `x${sha1(frameUrl)}` : undefined;
-            const fileName = path.join(s3FolderName, 'frames', `${domain}_${sha1ResourceUrl}.png`);
+            const randomIdentifier = Math.random();
+            const fileName = path.join(s3FolderName, 'frames', `${domain}_${sha1ResourceUrl}_${randomIdentifier}.png`);
             const filePath = 's3://' + path.join(s3ImagesBucket, fileName);
 
             let insertionError = false;
@@ -80,6 +81,7 @@ async function traverseFrames(frames, url, domain) {
                 Body: screenshot
             }).promise().catch(_err => insertionError = true));
 
+            const is_local_frame = await frame.evaluate('window.parent.location.host; true').catch(_err => false);
             const parentFrame = frame.parentFrame();
             const imageData = {
                 domain: domain,
@@ -87,6 +89,7 @@ async function traverseFrames(frames, url, domain) {
                 frame_id: await frame.evaluate(() => this.frameElement.getAttribute('id')).catch(_err => null),
                 frame_name: await frame.evaluate(() => this.frameElement.getAttribute('name')).catch(_err => null),
                 frame_url: frame.url(),
+                is_local_frame: is_local_frame,
                 parent_frame_id: parentFrame ? await parentFrame.evaluate(() => this.frameElement.getAttribute('id')).catch(_err => null) : null,
                 parent_frame_name: parentFrame ? await parentFrame.evaluate(() => this.frameElement.getAttribute('name')).catch(_err => null) : null,
                 parent_frame_url: parentFrame ? parentFrame.url() : null,
@@ -94,6 +97,7 @@ async function traverseFrames(frames, url, domain) {
                 resource_url: frameUrl,
                 imaged_data: filePath,
                 sha1_resource_url: sha1ResourceUrl,
+                random_identifier: randomIdentifier,
                 s3_insertion_error: insertionError
             };
 
@@ -182,9 +186,11 @@ function tryGetImagesOnPage(page, domain, url, timeout) {
                                 const parentFrame = responseFrame.parentFrame();
                                 const resourceUrl = response.url();
                                 const sha1ResourceUrl = resourceUrl ? `x${sha1(resourceUrl)}` : undefined;
+                                const randomIdentifier = Math.random();
+                                const firstPartOfFileName = `${domain}_${sha1ResourceUrl}_${randomIdentifier}`;
                                 const fileName = fileExtension ?
-                                    path.join(s3FolderName, 'images', `${domain}_${sha1ResourceUrl}.${fileExtension}`) :
-                                    path.join(s3FolderName, 'images', `${domain}_${sha1ResourceUrl}`);
+                                    path.join(s3FolderName, 'images', `${firstPartOfFileName}.${fileExtension}`) :
+                                    path.join(s3FolderName, 'images', firstPartOfFileName);
 
                                 const filePath = 's3://' + path.join(s3ImagesBucket, fileName);
 
@@ -207,7 +213,8 @@ function tryGetImagesOnPage(page, domain, url, timeout) {
                                         resource_url: resourceUrl,
                                         imaged_data: filePath,
                                         content_length: responseHeaders['content-length'],
-                                        sha1_resource_url: sha1ResourceUrl
+                                        sha1_resource_url: sha1ResourceUrl,
+                                        random_identifier: randomIdentifier
                                     };
 
                                     s3Server.putObject({
