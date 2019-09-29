@@ -49,3 +49,49 @@ CREATE TABLE graphml_mappings (
     s3_insertion_error boolean default false,
     date date default now()
 );
+
+-- table for the image features we should extract
+CREATE TABLE image_features (
+  id bigserial,
+  imaged_data text,
+
+  -- structural features
+  nodes integer default null,
+  edges integer default null,
+  nodes_edge_ratio decimal default null,
+
+  in_degree integer default null,
+  in_average_degree_connectivity decimal default null,
+  out_degree integer default null,
+  out_average_degree_connectivity decimal default null,
+  in_out_degree integer default null,
+  in_out_average_degree_connectivity decimal default null,
+  is_modified_by_script boolean default null,
+
+  parent_in_degree integer default null,
+  parent_in_average_degree_connectivity decimal default null,
+  parent_out_degree integer default null,
+  parent_out_average_degree_connectivity decimal default null,
+  parent_in_out_degree integer default null,
+  parent_in_out_average_degree_connectivity decimal default null,
+  parent_modified_by_script boolean default null,
+
+  -- content features
+  resource_url text,
+  resource_type text,
+  length_of_url integer,
+  is_subdomain boolean,
+  is_third_party boolean,
+  base_domain_in_query_string boolean,
+  semi_colon_in_query_string boolean,
+  is_iframe boolean,
+  width decimal default null,
+  height decimal default null,
+  standard_ad_width boolean default null,
+  standard_ad_height boolean default null,
+  standard_ad_size boolean default null,
+
+  -- other, based on the old classifier
+  is_classified_as_ad boolean default null,
+  ad_probability decimal default null
+);
