@@ -219,7 +219,6 @@ def get_features(s3, pg_bucket):
                             continue
 
 
-# - if the parent is an eval script
                         if img['resource_type'] == 'iframe':
                             found, node_id = get_remote_frame_node(remote_frame_nodes, resource_url)
                         else:
@@ -250,6 +249,7 @@ def get_features(s3, pg_bucket):
                                 image_dict['in_out_degree'] = elem_in_out_degree
                                 image_dict['in_out_average_degree_connectivity'] = graph_in_out_average_degree_connectivity[elem_in_out_degree]
 
+                                image_dict['is_modified_by_script'] = False
                                 for edge in edges_to_map[actual_node_id]:
                                     if is_modifying_edge(edge):
                                         image_dict['is_modified_by_script'] = True
@@ -272,10 +272,20 @@ def get_features(s3, pg_bucket):
                                     image_dict['parent_in_out_degree'] = parent_in_out_degree
                                     image_dict['parent_in_out_average_degree_connectivity'] = graph_in_out_average_degree_connectivity[parent_in_out_degree]
 
+                                    image_dict['parent_modified_by_script'] = False
                                     for edge in edges_to_map[parent]:
                                         if is_modifying_edge(edge):
                                             image_dict['parent_modified_by_script'] = True
                                             break
+                                else:
+                                    # ignore the entire image, since we can't extract all features
+                                    continue
+                            else:
+                                # ignore the entire image, since we can't extract all features
+                                continue
+                        else:
+                            # ignore the entire image, since we can't extract all features
+                            continue
 
 
                         # get the classification probability for the image
@@ -284,7 +294,8 @@ def get_features(s3, pg_bucket):
                             image_dict['is_classified_as_ad'] = classification == '1_Ads'
                             image_dict['ad_probability'] = probability
                         except:
-                            pass
+                            # ignore the entire image, since we can't extract all features
+                            continue
 
                         # structural features
                         image_dict['nodes'] = all_nodes_length
