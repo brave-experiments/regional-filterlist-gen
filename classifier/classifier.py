@@ -1,5 +1,6 @@
 import numpy
-from sklearn.model_selection import KFold, cross_val_score
+from sklearn.model_selection import KFold
+from sklearn.metrics import classification_report
 from sklearn import svm
 
 import argparse
@@ -203,15 +204,12 @@ def run_classifier(s3, X, Y):
     kf = KFold(n_splits=5, shuffle=True)
     for train_index, test_index in kf.split(X):
         #print("TRAIN:", train_index, "TEST:", test_index)
-        print('New fold...')
         X_train, X_test = X[train_index], X[test_index]
         Y_train, Y_test = Y[train_index], Y[test_index]
 
-        clf = svm.SVC(kernel='linear', C=1).fit(X_train, Y_train)
-        print('computing the score...')
-        print(clf.score(X_test, Y_test))
-
-
+        clf = svm.SVC(gamma='auto').fit(X_train, Y_train)
+        Y_pred = clf.predict(X_test)
+        print(classification_report(Y_test, Y_pred))
 
 
 if __name__ == "__main__":
