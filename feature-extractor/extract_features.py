@@ -209,7 +209,11 @@ def get_features(s3, pg_bucket):
 
                         image_bucket, image_path = split_s3_path(img['imaged_data'])
                         local_image_file = os.path.join(temp_dir, image_path.split('/')[-1])
-                        s3.s3.download_file(image_bucket, image_path, local_image_file)
+                        try:
+                            s3.s3.download_file(image_bucket, image_path, local_image_file)
+                        except:
+                            # if the image can't be downloaded, just continue to the next one..
+                            continue
 
                         width, height = None, None
                         try:
