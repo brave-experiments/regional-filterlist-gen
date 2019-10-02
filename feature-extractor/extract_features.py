@@ -237,6 +237,8 @@ def get_features(s3, pg_bucket):
                                     node_have_in_edges = False
 
                             if actual_node_id != 'n1' and node_have_in_edges:
+                                image_dict['time_from_page_start'] = all_nodes[actual_node_id]['timestamp']
+
                                 elem_in_degree = graph_in_degree[actual_node_id]
                                 image_dict['in_degree'] = elem_in_degree
                                 image_dict['in_average_degree_connectivity'] = graph_in_average_degree_connectivity[elem_in_degree]

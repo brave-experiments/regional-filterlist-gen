@@ -90,6 +90,7 @@ CREATE TABLE image_features (
   standard_ad_width boolean default null,
   standard_ad_height boolean default null,
   standard_ad_size boolean default null,
+  time_from_page_start decimal default null,
 
   -- other, based on the old classifier
   is_classified_as_ad boolean default null,
