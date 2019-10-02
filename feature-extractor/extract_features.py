@@ -239,6 +239,14 @@ def get_features(s3, pg_bucket):
                                             break
                                 except KeyError:
                                     node_have_in_edges = False
+                            elif img['resource_type'] == 'iframe':
+                                try:
+                                    for edge in edges_to_map[node_id]:
+                                        if edge[2]['edge type'] == 'cross DOM':
+                                            actual_node_id = edge[0]
+                                            break
+                                except KeyError:
+                                    node_have_in_edges = False
 
                             if actual_node_id != 'n1' and node_have_in_edges:
                                 image_dict['time_from_page_start'] = all_nodes[actual_node_id]['timestamp']
