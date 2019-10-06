@@ -201,7 +201,7 @@ def get_features(s3, pg_bucket):
                     remote_frame_nodes = get_remote_frame_nodes(all_nodes)
                     value_edges = get_value_edges(all_edges)
 
-                    img_cur.execute('select id, domain, resource_url, resource_type, imaged_data from image_data_table where page_url = %s', [page_url])
+                    img_cur.execute('select domain, resource_url, resource_type, imaged_data, width, height from image_data_table where page_url = %s', [page_url])
                     for img in tqdm(img_cur.fetchall()):
                         image_dict = dict()
                         domain = img['domain']
@@ -216,11 +216,15 @@ def get_features(s3, pg_bucket):
                             continue
 
                         width, height = None, None
-                        try:
-                            with Image.open(local_image_file) as img_file:
-                                width, height = img_file.size
-                        except:
-                            continue
+                        if img['resource_type'] == 'iframe':
+                            width = img['width']
+                            height = img['height']
+                        else:
+                            try:
+                                with Image.open(local_image_file) as img_file:
+                                    width, height = img_file.size
+                            except:
+                                continue
 
 
                         if img['resource_type'] == 'iframe':
@@ -338,7 +342,6 @@ def get_features(s3, pg_bucket):
 
                         image_dict['is_iframe'] = img['resource_type'] == 'iframe'
 
-                        image_dict['id'] = img['id']
                         image_dict['resource_url'] = resource_url
                         image_dict['resource_type'] = img['resource_type']
                         image_dict['imaged_data'] = img['imaged_data']
