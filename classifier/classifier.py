@@ -165,6 +165,7 @@ if __name__ == "__main__":
         data = dict_cur.fetchone()
         if data is not None:
             data['is_classified_as_ad'] = True
+            data['imaged_data'] = ad
             columns = data.keys()
             values = [data[column] for column in columns]
             query = 'INSERT INTO classifications (%s) VALUES %s'
@@ -178,6 +179,7 @@ if __name__ == "__main__":
         data = dict_cur.fetchone()
         if data is not None:
             data['is_classified_as_ad'] = False
+            data['imaged_data'] = non_ad
             columns = data.keys()
             values = [data[column] for column in columns]
             query = 'INSERT INTO classifications (%s) VALUES %s'
