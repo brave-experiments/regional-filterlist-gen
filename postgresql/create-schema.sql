@@ -28,6 +28,8 @@ CREATE TABLE image_data_table (
   is_one_by_one_pixel boolean default false,
   has_been_classified boolean default false,
   s3_insertion_error boolean default false,
+  width decimal default null,
+  height decimal default null,
   date date default now()
 );
 
@@ -52,7 +54,6 @@ CREATE TABLE graphml_mappings (
 
 -- table for the image features we should extract
 CREATE TABLE image_features (
-  id bigserial,
   imaged_data text,
 
   -- structural features
@@ -95,4 +96,16 @@ CREATE TABLE image_features (
   -- other, based on the old classifier
   is_classified_as_ad boolean default null,
   ad_probability decimal default null
+);
+
+CREATE TABLE classifications (
+  page_url text,
+  resource_url text,
+  resource_type text,
+  frame_url text,
+  imaged_data text,
+  is_classified_as_ad boolean default null,
+  is_classified_as_ad_easylist boolean default null,
+  is_classified_as_ad_supplement boolean default null,
+  is_classified_as_ad_easyprivacy boolean default null
 );
