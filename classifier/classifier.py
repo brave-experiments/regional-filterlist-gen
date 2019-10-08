@@ -1,6 +1,6 @@
 import numpy
 from sklearn.model_selection import KFold
-from sklearn.metrics import classification_report, precision_recall_fscore_support
+from sklearn.metrics import classification_report, precision_recall_fscore_support, roc_auc_score
 from sklearn import svm
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 
@@ -100,6 +100,7 @@ def run_classifier_with_kFold(X, Y, k):
     recall = 0
     precision = 0
     f1_score = 0
+    roc_auc = 0
     for train_index, test_index in kf.split(X):
         #print("TRAIN:", train_index, "TEST:", test_index)
         X_train, X_test = X[train_index], X[test_index]
@@ -112,52 +113,35 @@ def run_classifier_with_kFold(X, Y, k):
         precision += sum(prec)
         recall += sum(rec)
         f1_score += sum(f1)
+        roc_auc += roc_auc_score(Y_test, Y_pred_rand_forest)
 
     print ('average precision: ' + str(precision / (k * 2)))
     print ('average recall: ' + str(recall / (k * 2)))
     print ('average f1-score: ' + str(f1_score / (k * 2)))
+    print ('average roc_auc_score: ' + str(roc_auc / k))
 
 def run_classifier(ads_training, nonads_training, resource_type):
     X, Y = initiate_vectors(ads_training, nonads_training)
     classifier = RandomForestClassifier(n_estimators=100, class_weight='balanced').fit(X, Y)
     pg_conn = psycopg2.connect(os.environ['PG_CONNECTION_STRING_CLASSIFICATION_DATA'])
     dict_cur = pg_conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    if resource_type == 'combined':
-        dict_cur.execute('select * from image_features')
-    else:
-        dict_cur.execute('select * from image_features where resource_type=%s', [resource_type])
+    ads = set()
+    non_ads = set()
+    dict_cur.execute('select * from image_features where resource_type=%s', [resource_type])
     for img_data in tqdm(dict_cur.fetchall()):
         classification = classifier.predict([get_features(img_data)])[0]
         if classification == 1:
             ads.add(img_data['imaged_data'])
-            if img_data['imaged_data'] in non_ads:
-                non_ads.remove(img_data['imaged_data'])
         else:
-            if img_data['imaged_data'] not in ads:
-                non_ads.add(img_data['imaged_data'])
+            non_ads.add(img_data['imaged_data'])
 
     dict_cur.close()
     pg_conn.close()
 
+    return ads, non_ads
 
-if __name__ == "__main__":
-    ads_images = os.path.join(os.getcwd(), 'training_data', 'ads_images.csv')
-    nonads_images = os.path.join(os.getcwd(), 'training_data', 'nonads_images.csv')
-    ads_frames = os.path.join(os.getcwd(), 'training_data', 'ads_frames.csv')
-    nonads_frames = os.path.join(os.getcwd(), 'training_data', 'nonads_frames.csv')
-    ads_combined = os.path.join(os.getcwd(), 'training_data', 'ads_training.csv')
-    nonads_combined = os.path.join(os.getcwd(), 'training_data', 'nonads_training.csv')
 
-    #X, Y = initiate_vectors(ads_images, nonads_images)
-    #run_classifier_with_kFold(X, Y, 3)
-
-    #X, Y = initiate_vectors(ads_frames, nonads_frames)
-    #run_classifier_with_kFold(X, Y, 3)
-
-    run_classifier(ads_images, nonads_images, 'image')
-    run_classifier(ads_frames, nonads_frames, 'iframe')
-    run_classifier(ads_combined, nonads_combined, 'combined')
-
+def insert_classification(ads, non_ads):
     pg_conn = psycopg2.connect(os.environ['PG_CONNECTION_STRING_CLASSIFICATION_DATA'])
     dict_cur = pg_conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     for ad in tqdm(ads):
@@ -190,3 +174,21 @@ if __name__ == "__main__":
 
     dict_cur.close()
     pg_conn.close()
+
+if __name__ == "__main__":
+    ads_images = os.path.join(os.getcwd(), 'training_data', 'ads_images.csv')
+    nonads_images = os.path.join(os.getcwd(), 'training_data', 'nonads_images.csv')
+    ads_frames = os.path.join(os.getcwd(), 'training_data', 'ads_frames.csv')
+    nonads_frames = os.path.join(os.getcwd(), 'training_data', 'nonads_frames.csv')
+
+    #X, Y = initiate_vectors(ads_images, nonads_images)
+    #run_classifier_with_kFold(X, Y, 3)
+
+    #X, Y = initiate_vectors(ads_frames, nonads_frames)
+    #run_classifier_with_kFold(X, Y, 3)
+
+    ads, non_ads = run_classifier(ads_images, nonads_images, 'image')
+    insert_classification(ads, non_ads)
+
+    ads, non_ads = run_classifier(ads_frames, nonads_frames, 'iframe')
+    insert_classification(ads, non_ads)
