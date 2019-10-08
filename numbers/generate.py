@@ -227,7 +227,7 @@ def generate_chains(bucket, s3, filter_list=None):
                 script_chains = gen_script_chains(cutted_chains, all_nodes)
                 upstream_chains[page_url] = script_chains
 
-    print(upstream_chains)
+    return upstream_chains
 
 def cut(injector_chains, from_edges_mapping):
     all_injector_nodes = set()
@@ -243,12 +243,6 @@ def cut(injector_chains, from_edges_mapping):
         for i in range(0, len(current_chain)):
             for edge in from_edges_mapping[current_chain[i]]:
                 if is_modifying_edge(edge) or is_event_listener_edge(edge) or is_creation_edge(edge):
-                    print(edge)
-                    print(start_node)
-                    print(current_chain)
-                    for edge_2 in from_edges_mapping[edge[1]]:
-                        if edge_2['edge type'] == 'structure' and edge_2[1] in all_injector_nodes:
-                            print('yeay!')
                     if edge[1] not in all_injector_nodes:
                         found_cut = True
                         cutted_chains[start_node] = current_chain[:i]
