@@ -13,6 +13,7 @@ from tqdm import tqdm
 
 import html
 import utils
+import json
 
 # utility functions
 def edges_from_mapping(edges):
@@ -150,23 +151,26 @@ def generate_chains(bucket, s3, filter_list=None):
     ad_cur = pg_conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     upstream_chains = dict()
-    ads_by_us = dict()
+    original_script_chains = dict()
+    ads = dict()
     if filter_list == 'easylist':
         ad_cur.execute('select page_url, resource_url, resource_type, frame_url from classifications where is_classified_as_ad_easylist')
     elif filter_list == 'supplement':
         ad_cur.execute('select page_url, resource_url, resource_type, frame_url from classifications where is_classified_as_ad_supplement')
     elif filter_list == 'easyprivacy':
         ad_cur.execute('select page_url, resource_url, resource_type, frame_url from classifications where is_classified_as_ad_easyprivacy')
+    elif filter_list == 'allcombined':
+        ad_cur.execute('select page_url, resource_url, resource_type, frame_url from classifications where is_classified_as_ad_combined_filter_lists')
     else:
         ad_cur.execute('select page_url, resource_url, resource_type, frame_url from classifications where is_classified_as_ad')
 
     for ad in ad_cur.fetchall():
-        if ad['page_url'] in ads_by_us:
-            ads_by_us[ad['page_url']].append((ad['resource_url'], ad['resource_type']))
+        if ad['page_url'] in ads:
+            ads[ad['page_url']].append((ad['resource_url'], ad['resource_type']))
         else:
-            ads_by_us[ad['page_url']] = [(ad['resource_url'], ad['resource_type'])]
+            ads[ad['page_url']] = [(ad['resource_url'], ad['resource_type'])]
 
-    for page_url in tqdm(ads_by_us):
+    for page_url in tqdm(ads):
         dict_cur.execute('select file_name from graphml_mappings where queried_url=%s', [page_url])
         data = dict_cur.fetchone()
         if data is None:
@@ -197,7 +201,7 @@ def generate_chains(bucket, s3, filter_list=None):
                     all_remote_frames = get_remote_frame_nodes(all_nodes)
 
                     injector_chains = dict()
-                    for resource_url, resource_type in ads_by_us[page_url]:
+                    for resource_url, resource_type in ads[page_url]:
                         starting_node = None
                         if resource_type == 'image':
                             resource_node = get_image_node(all_resource_nodes, value_edges, resource_url)
@@ -223,11 +227,12 @@ def generate_chains(bucket, s3, filter_list=None):
                 # now, cut the injector chains to only store the ones which
                 # makes no other modifications
                 from_edges_mapping = edges_from_mapping(all_edges)
+                original_script_chains[page_url] = gen_script_chains(injector_chains, all_nodes)
                 cutted_chains = cut(injector_chains, from_edges_mapping)
                 script_chains = gen_script_chains(cutted_chains, all_nodes)
                 upstream_chains[page_url] = script_chains
 
-    return upstream_chains
+    return upstream_chains, original_script_chains
 
 def cut(injector_chains, from_edges_mapping):
     all_injector_nodes = set()
@@ -241,14 +246,9 @@ def cut(injector_chains, from_edges_mapping):
         found_cut = False
         current_chain = injector_chains[start_node]
         for i in range(0, len(current_chain)):
-            for edge in from_edges_mapping[current_chain[i]]:
-                if is_modifying_edge(edge) or is_event_listener_edge(edge) or is_creation_edge(edge):
-                    if edge[1] not in all_injector_nodes:
-                        found_cut = True
-                        cutted_chains[start_node] = current_chain[:i]
-                        break
-
-            if found_cut:
+            if not safe_to_remove(current_chain[i], from_edges_mapping, injector_chains):
+                found_cut = True
+                cutted_chains[start_node] = current_chain[:i]
                 break
 
         if not found_cut:
@@ -269,6 +269,24 @@ def gen_script_chains(chains, all_nodes):
 
     return script_resources
 
+def safe_to_remove(node, from_edges_mapping, injector_chains):
+    nodes_created_by_script = set()
+    parents_to_nodes_created_by_script = set()
+
+    for edge in from_edges_mapping[node]:
+        if edge[2]['edge type'] == 'create node':
+            nodes_created_by_script.add(edge[1])
+        elif edge[2]['edge type'] == 'insert node':
+            parent_node = 'n' + str(edge[2]['parent'])
+            parents_to_nodes_created_by_script.add(parent_node)
+
+    # if is_modifying_edge(edge) or is_event_listener_edge(edge) or is_creation_edge(edge):
+    #     if edge[1] not in all_injector_nodes:
+
+    parents_not_created_by_script = parents_to_nodes_created_by_script.difference(nodes_created_by_script)
+    return len(parents_not_created_by_script) <= 1
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Generates the nodes which corresponds to ads')
     parser.add_argument('--aws-access-key', help='aws access key')
@@ -278,7 +296,16 @@ if __name__ == "__main__":
     args = parser.parse_args()
     s3Bucket = S3FileSystem(anon=False, key=args.aws_access_key, secret=args.aws_secret_key)
 
-    generate_chains(args.pg_bucket, s3Bucket)
+    upstream_us, original_us = generate_chains(args.pg_bucket, s3Bucket)
+    with open('upstream_us.json', 'w') as upstream:
+        json.dump(upstream_us, upstream)
+    with open('original.json', 'w') as original:
+        json.dump(original_us, original)
     #generate_chains(args.pg_bucket, s3Bucket, 'easylist')
     #generate_chains(args.pg_bucket, s3Bucket, 'supplement')
     #generate_chains(args.pg_bucket, s3Bucket, 'easyprivacy')
+    upstream_filterlists, original_filterlists = generate_chains(args.pg_bucket, s3Bucket, 'allcombined')
+    with open('upstream_filterlists.json', 'w') as output:
+        json.dump(upstream_filterlists, output)
+    with open('original_filterlists.json', 'w') as output:
+        json.dump(original_filterlists, output)
