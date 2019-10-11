@@ -120,22 +120,23 @@ def is_creation_edge(edge):
 
 def get_injector_chain(node, injectors, all_nodes, to_edges_mapping):
     injector_node = None
-    if all_nodes[node]['node type'] == 'script':
-        for edge in to_edges_mapping[node]:
-            if 'edge type' in edge[2] and edge[2]['edge type'] == 'execute':
-                injector_node = edge[0]
-                injectors.append(injector_node)
-                break
-            elif 'edge type' in edge[2] and edge[2]['edge type'] == 'create node':
-                injector_node = edge[0]
-                injectors.append(injector_node)
-                break
-    else:
-        for edge in to_edges_mapping[node]:
-            if 'edge type' in edge[2] and edge[2]['edge type'] == 'create node':
-                injector_node = edge[0]
-                injectors.append(injector_node)
-                break
+    if node in to_edges_mapping:
+        if all_nodes[node]['node type'] == 'script':
+            for edge in to_edges_mapping[node]:
+                if 'edge type' in edge[2] and edge[2]['edge type'] == 'execute':
+                    injector_node = edge[0]
+                    injectors.append(injector_node)
+                    break
+                elif 'edge type' in edge[2] and edge[2]['edge type'] == 'create node':
+                    injector_node = edge[0]
+                    injectors.append(injector_node)
+                    break
+        else:
+            for edge in to_edges_mapping[node]:
+                if 'edge type' in edge[2] and edge[2]['edge type'] == 'create node':
+                    injector_node = edge[0]
+                    injectors.append(injector_node)
+                    break
 
     if injector_node is not None and injector_node != 'n1':
         get_injector_chain(injector_node, injectors, all_nodes, to_edges_mapping)
@@ -154,21 +155,23 @@ def generate_chains(bucket, s3, filter_list=None):
     original_script_chains = dict()
     ads = dict()
     if filter_list == 'easylist':
-        ad_cur.execute('select page_url, resource_url, resource_type, frame_url from classifications where is_classified_as_ad_easylist')
+        ad_cur.execute('select imaged_data, page_url, resource_url, resource_type, frame_url from classifications where is_classified_as_ad_easylist')
     elif filter_list == 'supplement':
-        ad_cur.execute('select page_url, resource_url, resource_type, frame_url from classifications where is_classified_as_ad_supplement')
+        ad_cur.execute('select imaged_data, page_url, resource_url, resource_type, frame_url from classifications where is_classified_as_ad_supplement')
     elif filter_list == 'easyprivacy':
-        ad_cur.execute('select page_url, resource_url, resource_type, frame_url from classifications where is_classified_as_ad_easyprivacy')
+        ad_cur.execute('select imaged_data, page_url, resource_url, resource_type, frame_url from classifications where is_classified_as_ad_easyprivacy')
+    elif filter_list == 'all_lists_combined':
+        ad_cur.execute('select imaged_data, page_url, resource_url, resource_type, frame_url from classifications where is_classified_as_ad_combined_filter_lists')
     elif filter_list == 'allcombined':
-        ad_cur.execute('select page_url, resource_url, resource_type, frame_url from classifications where is_classified_as_ad_combined_filter_lists')
+        ad_cur.execute('select imaged_data, page_url, resource_url, resource_type, frame_url from classifications where is_classified_as_ad or is_classified_as_ad_combined_filter_lists')
     else:
-        ad_cur.execute('select page_url, resource_url, resource_type, frame_url from classifications where is_classified_as_ad')
+        ad_cur.execute('select imaged_data, page_url, resource_url, resource_type, frame_url from classifications where is_classified_as_ad')
 
     for ad in ad_cur.fetchall():
         if ad['page_url'] in ads:
-            ads[ad['page_url']].append((ad['resource_url'], ad['resource_type']))
+            ads[ad['page_url']].append((ad['imaged_data'], ad['resource_url'], ad['resource_type']))
         else:
-            ads[ad['page_url']] = [(ad['resource_url'], ad['resource_type'])]
+            ads[ad['page_url']] = [(ad['imaged_data'], ad['resource_url'], ad['resource_type'])]
 
     for page_url in tqdm(ads):
         dict_cur.execute('select file_name from graphml_mappings where queried_url=%s', [page_url])
@@ -185,6 +188,7 @@ def generate_chains(bucket, s3, filter_list=None):
                 print('cannot find file ' + graphml_path)
                 continue
 
+            all_nodes = None
             with open(local_file, 'r') as graphml_file:
                 page_graph_data = ''
                 for line in graphml_file:
@@ -201,16 +205,20 @@ def generate_chains(bucket, s3, filter_list=None):
                     all_remote_frames = get_remote_frame_nodes(all_nodes)
 
                     injector_chains = dict()
-                    for resource_url, resource_type in ads[page_url]:
+                    for imaged_data, resource_url, resource_type in ads[page_url]:
                         starting_node = None
                         if resource_type == 'image':
                             resource_node = get_image_node(all_resource_nodes, value_edges, resource_url)
+                            if resource_node is None:
+                                continue
                             for edge in edges_to_map[resource_node]:
                                 if edge[2]['edge type'] == 'request start':
                                     starting_node = edge[0]
                                     break
                         else:
                             frame_node = get_remote_frame_node(all_remote_frames, resource_url)
+                            if frame_node is None:
+                                continue
                             for edge in edges_to_map[frame_node]:
                                 if edge[2]['edge type'] == 'cross DOM':
                                     starting_node = edge[0]
@@ -219,7 +227,7 @@ def generate_chains(bucket, s3, filter_list=None):
                         if starting_node is None:
                             continue
 
-                        injector_chains[starting_node] = get_injector_chain(starting_node, [], all_nodes, edges_to_map)
+                        injector_chains[imaged_data] = get_injector_chain(starting_node, [], all_nodes, edges_to_map)
 
                 except e:
                     continue
@@ -227,14 +235,14 @@ def generate_chains(bucket, s3, filter_list=None):
                 # now, cut the injector chains to only store the ones which
                 # makes no other modifications
                 from_edges_mapping = edges_from_mapping(all_edges)
-                original_script_chains[page_url] = gen_script_chains(injector_chains, all_nodes)
-                cutted_chains = cut(injector_chains, from_edges_mapping)
-                script_chains = gen_script_chains(cutted_chains, all_nodes)
+                original_script_chains[page_url] = gen_script_chains(injector_chains, all_nodes, edges_to_map)
+                cutted_chains = cut(injector_chains, from_edges_mapping, all_nodes)
+                script_chains = gen_script_chains(cutted_chains, all_nodes, edges_to_map)
                 upstream_chains[page_url] = script_chains
 
     return upstream_chains, original_script_chains
 
-def cut(injector_chains, from_edges_mapping):
+def cut(injector_chains, from_edges_mapping, all_nodes):
     all_injector_nodes = set()
     for start_node in injector_chains:
         all_injector_nodes.add(start_node)
@@ -246,7 +254,7 @@ def cut(injector_chains, from_edges_mapping):
         found_cut = False
         current_chain = injector_chains[start_node]
         for i in range(0, len(current_chain)):
-            if not safe_to_remove(current_chain[i], from_edges_mapping, injector_chains):
+            if not safe_to_remove(current_chain[i], from_edges_mapping, all_nodes):
                 found_cut = True
                 cutted_chains[start_node] = current_chain[:i]
                 break
@@ -256,35 +264,62 @@ def cut(injector_chains, from_edges_mapping):
 
     return cutted_chains
 
-def gen_script_chains(chains, all_nodes):
+def find_script_request_url(node, all_nodes, to_edges):
+    execute_node = None
+    for edge in to_edges[node]:
+        if 'edge type' in edge[2] and edge[2]['edge type'] == 'execute':
+            execute_node = edge[0]
+            break
+
+    if execute_node is not None:
+        request_node = None
+        for edge in to_edges[execute_node]:
+            if 'edge type' in edge[2] and edge[2]['edge type'] == 'request complete':
+                request_node = edge[0]
+                break
+
+        if request_node is not None:
+            if 'url' in all_nodes[request_node]:
+                return all_nodes[request_node]['url']
+
+    return None
+
+
+def gen_script_chains(chains, all_nodes, to_edges):
     script_resources = dict()
+
     for start_node in chains:
         current_chain = chains[start_node]
         scripts = []
         for node in current_chain:
             if all_nodes[node]['node type'] == 'script' and all_nodes[node]['script type'] == 'external file':
-                scripts.append(all_nodes[node]['url'])
+                script_url = find_script_request_url(node, all_nodes, to_edges)
+                if script_url is None:
+                    scripts.append(all_nodes[node]['url'])
+                else:
+                    scripts.append(script_url)
 
         script_resources[start_node] = scripts
 
     return script_resources
 
-def safe_to_remove(node, from_edges_mapping, injector_chains):
+def safe_to_remove(node, from_edges_mapping, all_nodes):
     nodes_created_by_script = set()
     parents_to_nodes_created_by_script = set()
 
     for edge in from_edges_mapping[node]:
         if edge[2]['edge type'] == 'create node':
-            nodes_created_by_script.add(edge[1])
+            graphml_node = edge[1]
+            actual_id = all_nodes[graphml_node]['node id']
+            nodes_created_by_script.add(actual_id)
         elif edge[2]['edge type'] == 'insert node':
-            parent_node = 'n' + str(edge[2]['parent'])
-            parents_to_nodes_created_by_script.add(parent_node)
+            parents_to_nodes_created_by_script.add(edge[2]['parent'])
 
     # if is_modifying_edge(edge) or is_event_listener_edge(edge) or is_creation_edge(edge):
     #     if edge[1] not in all_injector_nodes:
 
     parents_not_created_by_script = parents_to_nodes_created_by_script.difference(nodes_created_by_script)
-    return len(parents_not_created_by_script) <= 1
+    return len(parents_not_created_by_script) <= 2
 
 
 if __name__ == "__main__":
@@ -297,15 +332,37 @@ if __name__ == "__main__":
     s3Bucket = S3FileSystem(anon=False, key=args.aws_access_key, secret=args.aws_secret_key)
 
     upstream_us, original_us = generate_chains(args.pg_bucket, s3Bucket)
-    with open('upstream_us.json', 'w') as upstream:
+    with open('upstream_us_sri_lanka.json', 'w') as upstream:
         json.dump(upstream_us, upstream)
-    with open('original.json', 'w') as original:
+    with open('original_us_sri_lanka.json', 'w') as original:
         json.dump(original_us, original)
-    #generate_chains(args.pg_bucket, s3Bucket, 'easylist')
-    #generate_chains(args.pg_bucket, s3Bucket, 'supplement')
-    #generate_chains(args.pg_bucket, s3Bucket, 'easyprivacy')
-    upstream_filterlists, original_filterlists = generate_chains(args.pg_bucket, s3Bucket, 'allcombined')
-    with open('upstream_filterlists.json', 'w') as output:
+
+    upstream_el, original_el = generate_chains(args.pg_bucket, s3Bucket, 'easylist')
+    with open('upstream_el_sri_lanka.json', 'w') as upstream:
+        json.dump(upstream_el, upstream)
+    with open('original_el_sri_lanka.json', 'w') as original:
+        json.dump(original_el, original)
+
+    upstream_s, original_s = generate_chains(args.pg_bucket, s3Bucket, 'supplement')
+    with open('upstream_s_sri_lanka.json', 'w') as upstream:
+        json.dump(upstream_s, upstream)
+    with open('original_s_sri_lanka.json', 'w') as original:
+        json.dump(original_s, original)
+
+    upstream_ep, original_ep = generate_chains(args.pg_bucket, s3Bucket, 'easyprivacy')
+    with open('upstream_ep_sri_lanka.json', 'w') as upstream:
+        json.dump(upstream_ep, upstream)
+    with open('original_ep_sri_lanka.json', 'w') as original:
+        json.dump(original_ep, original)
+
+    upstream_filterlists, original_filterlists = generate_chains(args.pg_bucket, s3Bucket, 'all_lists_combined')
+    with open('upstream_filterlists_sri_lanka.json', 'w') as output:
         json.dump(upstream_filterlists, output)
-    with open('original_filterlists.json', 'w') as output:
+    with open('original_filterlists_sri_lanka.json', 'w') as output:
+        json.dump(original_filterlists, output)
+
+    upstream_all, original_all = generate_chains(args.pg_bucket, s3Bucket, 'allcombined')
+    with open('upstream_all_sri_lanka.json', 'w') as output:
+        json.dump(upstream_filterlists, output)
+    with open('original_all_sri_lanka.json', 'w') as output:
         json.dump(original_filterlists, output)
