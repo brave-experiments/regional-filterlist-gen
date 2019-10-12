@@ -27,14 +27,15 @@ const files = ['upstream', 'original'];
 
 const client = new AdBlockClient.Engine(combined_rules, true);
 for (const type of types) {
-    let resourcesMissed = 0;
     for (const file of files) {
+        let resourcesMissed = 0;
+        let uniqueResourcesMissed = 0;
         const dataFile = require(path.join(chains_path, supplement_folder, file + '_' + type + '.json'));
         for (const pageUrl in dataFile) {
+            uniqueResources = new Set();
             for (const imageData in dataFile[pageUrl]) {
                 const [resourceUrl, resourceType, chain] = dataFile[pageUrl][imageData];
                 const unquotedResourceUrl = resourceUrl.replace(/"/g,"");
-                chain.reverse();
                 const actualResourceType = resourceType === 'image' ? 'image' : 'sub_frame';
                 if (unquotedResourceUrl.startsWith('data:') || unquotedResourceUrl.startsWith('blob:')) {
                     continue;
@@ -42,21 +43,24 @@ for (const type of types) {
 
                 if (client.check(unquotedResourceUrl, pageUrl, actualResourceType)) {
                     const chainLength = chain.length;
+                    chain.reverse(); // to have the top most script first
                     for (let i = 0; i < chainLength; i++) {
-                        if (client.check(chain[i], pageUrl, 'script')) {
-                            if (i != 0) {
-                                resourcesMissed += i;
-                            }
-
+                        if (!client.check(chain[i], pageUrl, 'script')) {
+                            resourcesMissed++;
+                            uniqueResources.add(chain[i]);
+                        } else {
                             break;
                         }
                     }
                 }
             }
+
+            uniqueResourcesMissed += uniqueResources.size;
         }
 
         console.log();
         console.log(file + '_' + type);
+        console.log('unique resources missed from chains: ' + uniqueResourcesMissed);
         console.log('resources missed: ' + resourcesMissed);
     }
 }
@@ -64,10 +68,12 @@ for (const type of types) {
 console.log('\n--------------------------------------');
 console.log('--------------------------------------');
 
-let resourcesMissed = 0;
 for (const file of files) {
+    let resourcesMissed = 0;
     const dataFile = require(path.join(chains_path, supplement_folder, file + '_us' + '.json'));
+    let uniqueResourcesMissed = 0;
     for (const pageUrl in dataFile) {
+        uniqueResources = new Set();
         for (const imageData in dataFile[pageUrl]) {
             const [resourceUrl, resourceType, chain] = dataFile[pageUrl][imageData];
             const unquotedResourceUrl = resourceUrl.replace(/"/g,"");
@@ -83,6 +89,7 @@ for (const file of files) {
                 for (let i = 0; i < chainLength; i++) {
                     if (!client.check(chain[i], pageUrl, 'script')) {
                         resourcesMissed++;
+                        uniqueResources.add(chain[i]);
                     } else {
                         found = true;
                         break;
@@ -91,12 +98,16 @@ for (const file of files) {
 
                 if (!found) {
                     resourcesMissed++;
+                    uniqueResources.add(resourceUrl);
                 }
             }
         }
+
+        uniqueResourcesMissed += uniqueResources.size;
     }
 
     console.log();
     console.log(file + '_us');
+    console.log('unique resources missed: ' + uniqueResourcesMissed);
     console.log('resources missed: ' + resourcesMissed);
 }
