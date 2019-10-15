@@ -32,7 +32,7 @@ for (const type of types) {
         let uniqueResourcesMissed = 0;
         const dataFile = require(path.join(chains_path, supplement_folder, file + '_' + type + '.json'));
         for (const pageUrl in dataFile) {
-            uniqueResources = new Set();
+            let uniqueResources = new Set();
             for (const imageData in dataFile[pageUrl]) {
                 const [resourceUrl, resourceType, chain] = dataFile[pageUrl][imageData];
                 const unquotedResourceUrl = resourceUrl.replace(/"/g,"");
@@ -65,15 +65,51 @@ for (const type of types) {
     }
 }
 
+/*
+for (const type of types) {
+    for (const file of files) {
+        let blockedInChain = 0;
+        const dataFile = require(path.join(chains_path, supplement_folder, file + '_' + type + '.json'));
+        for (const pageUrl in dataFile) {
+            for (const imageData in dataFile[pageUrl]) {
+                const [resourceUrl, resourceType, chain] = dataFile[pageUrl][imageData];
+                const unquotedResourceUrl = resourceUrl.replace(/"/g,"");
+                const actualResourceType = resourceType === 'image' ? 'image' : 'sub_frame';
+                if (unquotedResourceUrl.startsWith('data:') || unquotedResourceUrl.startsWith('blob:')) {
+                    continue;
+                }
+
+                if (!client.check(unquotedResourceUrl, pageUrl, actualResourceType)) {
+                    const chainLength = chain.length;
+                    chain.reverse(); // to have the top most script first
+                    for (let i = 0; i < chainLength; i++) {
+                        if (client.check(chain[i], pageUrl, 'script')) {
+                            blockedInChain++;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        console.log();
+        console.log(file + '_' + type);
+        console.log('missed resource blocked in chain: ' + blockedInChain);
+    }
+}*/
+
 console.log('\n--------------------------------------');
 console.log('--------------------------------------');
 
 for (const file of files) {
     let resourcesMissed = 0;
+    let chainElemsMissed = 0;
     const dataFile = require(path.join(chains_path, supplement_folder, file + '_us' + '.json'));
     let uniqueResourcesMissed = 0;
+    let uniqueChainResourcesMissed = 0;
     for (const pageUrl in dataFile) {
-        uniqueResources = new Set();
+        let uniqueResources = new Set();
+        let uniqueChainResources = new Set();
         for (const imageData in dataFile[pageUrl]) {
             const [resourceUrl, resourceType, chain] = dataFile[pageUrl][imageData];
             const unquotedResourceUrl = resourceUrl.replace(/"/g,"");
@@ -89,7 +125,9 @@ for (const file of files) {
                 for (let i = 0; i < chainLength; i++) {
                     if (!client.check(chain[i], pageUrl, 'script')) {
                         resourcesMissed++;
+                        chainElemsMissed++;
                         uniqueResources.add(chain[i]);
+                        uniqueChainResources.add(chain[i]);
                     } else {
                         found = true;
                         break;
@@ -104,10 +142,13 @@ for (const file of files) {
         }
 
         uniqueResourcesMissed += uniqueResources.size;
+        uniqueChainResourcesMissed += uniqueChainResources.size;
     }
 
     console.log();
     console.log(file + '_us');
-    console.log('unique resources missed: ' + uniqueResourcesMissed);
+    console.log('unique total resources missed: ' + uniqueResourcesMissed);
+    console.log('unique chain resources missed: ' + uniqueChainResourcesMissed);
     console.log('resources missed: ' + resourcesMissed);
+    console.log('chain elements missed: ' + chainElemsMissed);
 }
