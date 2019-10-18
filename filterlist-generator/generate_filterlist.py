@@ -2,41 +2,34 @@ import argparse
 import os
 import json
 from urllib.parse import urlsplit
-
-
-# def generate_filterlist(region):
-#     current_dir = os.getcwd()
-#     upstream_file = os.path.join(current_dir, region, 'upstream.json')
-#     rules = set()
-#     with open(upstream_file, 'r') as upstream:
-#         upstream_dict = json.load(upstream)
-#         for page_url in upstream_dict:
-#             for imaged_data in upstream_dict[page_url]:
-#                 url_to_use = None
-#                 [resource_url, resource_type, chain] = upstream_dict[page_url][imaged_data]
-#                 if len(chain) == 0:
-#                     url_to_use = resource_url
-#                 else:
-#                     url_to_use = chain[-1]
-
-#                 url_parts = urlsplit(url_to_use)
-#                 rule = '||' + url_parts.netloc + url_parts.path
-#                 rules.add(rule)
-
-#     print(len(rules))
-#     with open(region + '.rules', 'w') as output:
-#         output.write('\n'.join(rules))
+import tldextract
 
 def generate_filterlist(region):
     upstream_file = region + '.txt'
     rules = set()
     all_rules = dict()
     with open(upstream_file, 'r') as upstream:
-        for line in upstream.readlines():
-            line = line.strip()
-            url_to_use = line
-            url_parts = urlsplit(url_to_use)
-            rule = '||' + url_parts.netloc + url_parts.path
+        for url in upstream.readlines():
+            url = url.strip()
+
+            # To get the correct eTLD + 1 root
+            parts = tldextract.extract(url)
+            subdomain_parts = parts.subdomain.split('.')
+            plus_one_root = subdomain_parts[-1]
+
+            # To get the path
+            path = urlsplit(url).path
+
+            # Finally, merge them together as a rule
+            rule = None
+            if plus_one_root:
+                rule = '||' + plus_one_root + '.' + parts.domain + '.' + parts.suffix
+            else:
+                rule = '||' + parts.domain + '.' + parts.suffix
+
+            if path:
+                rule = rule + path
+
             if rule in rules:
                 all_rules[rule] += 1
             else:
