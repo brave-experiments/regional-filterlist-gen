@@ -33,12 +33,13 @@ const WAIT_FOR_LINGERING_REQUESTS = 3000;
 // foldername for the s3 buckets
 let s3FolderName = '';
 
-// the user agent for the brave binary
-const userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/76.0.3809.72 Safari/537.36";
+// the user agent for the brave binary (on Linux, change to the Mac one if needed)
+const userAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/76.0.3809.72 Safari/537.36";
 
+// Set the --lang to the language you need...
 const brave_args = [
     '--user-agent=' + userAgent,
-    '--lang=si,ta',
+    //'--lang=si-LK,si,ta;q=0.5',
     '--incognito',
     '--user-data-dir-name=page_graph',
     '--v=0',
@@ -52,53 +53,48 @@ puppeteer.use(pluginStealth());
 async function traverseFrames(frames, url, domain) {
     while (frames.length != 0) {
         const frame = frames.pop();
-        if (frame.isDetached()) {
-            continue;
-        }
-
-        let children = frame.childFrames();
-        frames = frames.concat(children);
-        const frameBody = await frame.$('body');
-        if (frameBody === null) {
+        if (frame === null) {
             continue;
         }
 
         // no need to screenshot frames which are either 0 in width or height
-        const frameBoundingBox = await frameBody.boundingBox();
+        const frameBoundingBox = await frame.boundingBox();
         if (frameBoundingBox !== null && frameBoundingBox.width > 0
                 && frameBoundingBox.height > 0) {
 
-            const frameUrl = frame.url();
+            let frameUrl = await frame.getProperty('src');
+            frameUrl = await frameUrl.jsonValue();
+            let frame_id = await frame.getProperty('id');
+            frame_id = await frame_id.jsonValue();
+            let frame_name = await frame.getProperty('name');
+            frame_name = await frame_name.jsonValue();
+
             const sha1ResourceUrl = frameUrl ? `x${sha1(frameUrl)}` : undefined;
             const randomIdentifier = Math.random();
             const fileName = path.join(s3FolderName, 'frames', `${domain}_${sha1ResourceUrl}_${randomIdentifier}.png`);
             const filePath = 's3://' + path.join(s3ImagesBucket, fileName);
 
             let insertionError = false;
-            await frameBody.screenshot().then(screenshot => s3Server.putObject({
+            await frame.screenshot().then(screenshot => s3Server.putObject({
                 Bucket: s3ImagesBucket,
                 Key: fileName,
                 Body: screenshot
-            }).promise().catch(_err => insertionError = true));
+            }).promise().catch(_err => { insertionError = true }));
 
-            const is_local_frame = await frame.evaluate('window.parent.location.host; true').catch(_err => false);
-            const parentFrame = frame.parentFrame();
             const imageData = {
                 domain: domain,
                 page_url: url,
-                frame_id: await frame.evaluate(() => this.frameElement.getAttribute('id')).catch(_err => null),
-                frame_name: await frame.evaluate(() => this.frameElement.getAttribute('name')).catch(_err => null),
-                frame_url: frame.url(),
-                is_local_frame: is_local_frame,
-                parent_frame_id: parentFrame ? await parentFrame.evaluate(() => this.frameElement.getAttribute('id')).catch(_err => null) : null,
-                parent_frame_name: parentFrame ? await parentFrame.evaluate(() => this.frameElement.getAttribute('name')).catch(_err => null) : null,
-                parent_frame_url: parentFrame ? parentFrame.url() : null,
+                frame_id: frame_id ? frame_id : null,
+                frame_name: frame_name ? frame_name : null,
+                frame_url: frameUrl,
                 resource_type: 'iframe',
                 resource_url: frameUrl,
                 imaged_data: filePath,
                 sha1_resource_url: sha1ResourceUrl,
                 random_identifier: randomIdentifier,
-                s3_insertion_error: insertionError
+                s3_insertion_error: insertionError,
+                width: frameBoundingBox.width,
+                height: frameBoundingBox.height
             };
 
             await postgresInsertImageData(imageData);
@@ -232,7 +228,8 @@ function tryGetImagesOnPage(page, domain, url, timeout) {
             );
 
             try {
-                const response = await page.goto(url, { waitUntil: 'networkidle0', timeout: timeout });
+                const loadStarted = Date.now();
+                const response = await page.goto(url, { waitUntil: 'networkidle2', timeout: timeout });
                 if (response !== null && response.ok() && pageWorked) {
                     /* 
                     * All image responses for the main frame should have been captured
@@ -240,16 +237,21 @@ function tryGetImagesOnPage(page, domain, url, timeout) {
                     * However, to be safe, we start by allowing 30 seconds to have
                     * as much as possible loaded.
                     */
-                    await sleep(WAIT_FOR_FRAMES_LOAD);
+                    const loadEnded = Date.now();
+                    const elapsedLoadTime = loadEnded - loadStarted;
+                    if (elapsedLoadTime < WAIT_FOR_FRAMES_LOAD) {
+                        await sleep(WAIT_FOR_FRAMES_LOAD - elapsedLoadTime);
+                    }
 
                     /* Before taking screenshots, modify the viewport, since
                      * screenshots will be blank if the elements are outside
                      * the viewport
                      */
                     await setViewport(page);
+                    await page.waitFor(1000);
 
                     // then traverse the frames and take screenshots
-                    let childFrames = await page.mainFrame().childFrames();
+                    let childFrames = await page.$$('iframe');
                     await traverseFrames(childFrames, url, domain);
 
                     // then fix the graphml file
@@ -263,9 +265,10 @@ function tryGetImagesOnPage(page, domain, url, timeout) {
                 if (pageWorked && err instanceof puppeteer_original.errors.TimeoutError) {
                     // Timeout... first, set the viewport...
                     await setViewport(page);
+                    await page.waitFor(1000);
 
                     // then traverse the frames...
-                    let childFrames = await page.mainFrame().childFrames();
+                    let childFrames = await page.$$('iframe');
                     await traverseFrames(childFrames, url, domain);
 
                     // and finally dump the graphml file
@@ -293,7 +296,7 @@ async function crawlSpecificPage(execPath, domain, url, timeout) {
             .catch(_err => {
                 return false;
         }),
-        new Promise((resolve, reject) => setTimeout(reject, timeout + 180000))
+        new Promise((resolve, reject) => setTimeout(reject, timeout + 120000))
     ]).catch(async _err => {
         // we timed out with the failsafe...
         const entry = {
@@ -314,7 +317,7 @@ async function crawlPage(execPath, domain, protocol, timeout) {
     await sleep(WAIT_FOR_LINGERING_REQUESTS);
 
     if (resultObject.result === true) {
-        const children = await getChildrenLinks(resultObject.page, 4)
+        const children = await getChildrenLinks(resultObject.page, 2)
             .catch(_err => { return [] });
         await resultObject.page.close();
         await resultObject.browser.close();
@@ -396,7 +399,6 @@ async function getChildrenLinks(page, children) {
     s3PageGraphBucket = args.s3p;
     s3FolderName = args.s3f;
 
-    console.log(args.domains);
     const inputFile = fs.readFileSync(args.domains, 'utf-8')
         .split('\n')
         .filter(Boolean);
@@ -404,7 +406,7 @@ async function getChildrenLinks(page, children) {
     const startDate = new Date().getTime();
     for (let i = 0; i < inputFile.length; i++) {
         // structure of inputFile[i] is (rank,url), so we must remove the rank
-        //let [_rank, domain] = inputFile[i].trim().split(',');
+        //let [_rank, domain] = domains[i].trim().split(',');
         let domain = inputFile[i].trim();
         await crawlPage(brave_path, domain, 'http://', timeout * 1000);
     }
