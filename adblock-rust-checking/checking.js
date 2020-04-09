@@ -103,7 +103,7 @@ for (let clientName in result) {
         if (line) {
             const [pageUrl, resourceType, resourceUrl, imaged_data] = line.match(/("[^"]*")|[^,]+/g);
             const unquotedResourceUrl = resourceUrl.replace(/"/g,"");
-            if (client.check(unquotedResourceUrl, pageUrl, 'sub_frame', true)) {
+            if (client.check(unquotedResourceUrl, pageUrl, 'sub_frame')) {
                 frameBlockedByUsAndList++;
                 blockedMapping[clientName].push(imaged_data);
             } else {
@@ -120,7 +120,7 @@ for (let clientName in result) {
         if (line) {
             const [pageUrl, resourceType, resourceUrl, imaged_data] = line.match(/("[^"]*")|[^,]+/g);
             const unquotedResourceUrl = resourceUrl.replace(/"/g,"");
-            if (client.check(unquotedResourceUrl, pageUrl, 'sub_frame', true)) {
+            if (client.check(unquotedResourceUrl, pageUrl, 'sub_frame')) {
                 frameNotBlockedByUsButList++;
                 blockedMapping[clientName].push(imaged_data);
             } else {

@@ -108,5 +108,6 @@ CREATE TABLE classifications (
   is_classified_as_ad_easylist boolean default null,
   is_classified_as_ad_supplement boolean default null,
   is_classified_as_ad_easyprivacy boolean default null,
-  is_classified_as_ad_combined_filter_lists boolean default null
+  is_classified_as_ad_combined_filter_lists boolean default null,
+  chain_element_block text default null
 );

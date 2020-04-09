@@ -12,8 +12,8 @@ from urllib.parse import urlsplit
 from tqdm import tqdm
 
 import html
-import utils
 import json
+import sys
 
 # utility functions
 def edges_from_mapping(edges):
@@ -146,7 +146,38 @@ def get_injector_chain(node, injectors, all_nodes, to_edges_mapping):
 
     return injectors
 
-def generate_chains(bucket, s3, filter_list=None):
+def get_new_starting_node(node, script_url, all_nodes, to_edges_mapping):
+    if all_nodes[node]['node type'] == 'script' and all_nodes[node]['script type'] == 'external file':
+        node_script_url = find_script_request_url(node, all_nodes, to_edges_mapping)
+        if node_script_url is None:
+            node_script_url = all_nodes[node]['url']
+
+        if node_script_url == script_url:
+            return node
+
+    start_node = None
+    if node in to_edges_mapping:
+        if all_nodes[node]['node type'] == 'script':
+            for edge in to_edges_mapping[node]:
+                if 'edge type' in edge[2] and edge[2]['edge type'] == 'execute':
+                    start_node = edge[0]
+                    break
+                elif 'edge type' in edge[2] and edge[2]['edge type'] == 'create node':
+                    start_node = edge[0]
+                    break
+        else:
+            for edge in to_edges_mapping[node]:
+                if 'edge type' in edge[2] and edge[2]['edge type'] == 'create node':
+                    start_node = edge[0]
+                    break
+
+    if start_node is not None and start_node != 'n1':
+        return get_new_starting_node(start_node, script_url, all_nodes, to_edges_mapping)
+
+    return None
+
+
+def generate_chains(bucket, s3, filter_list):
     pg_conn = psycopg2.connect(os.environ['PG_CONNECTION_STRING'])
     dict_cur = pg_conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     ad_cur = pg_conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -154,24 +185,29 @@ def generate_chains(bucket, s3, filter_list=None):
     upstream_chains = dict()
     original_script_chains = dict()
     ads = dict()
-    if filter_list == 'easylist':
-        ad_cur.execute('select imaged_data, page_url, resource_url, resource_type, frame_url from classifications where is_classified_as_ad_easylist')
-    elif filter_list == 'supplement':
-        ad_cur.execute('select imaged_data, page_url, resource_url, resource_type, frame_url from classifications where is_classified_as_ad_supplement')
-    elif filter_list == 'easyprivacy':
-        ad_cur.execute('select imaged_data, page_url, resource_url, resource_type, frame_url from classifications where is_classified_as_ad_easyprivacy')
-    elif filter_list == 'all_lists_combined':
-        ad_cur.execute('select imaged_data, page_url, resource_url, resource_type, frame_url from classifications where is_classified_as_ad_combined_filter_lists')
-    elif filter_list == 'allcombined':
-        ad_cur.execute('select imaged_data, page_url, resource_url, resource_type, frame_url from classifications where is_classified_as_ad or is_classified_as_ad_combined_filter_lists')
+    if filter_list == 'lists':
+        print(filter_list)
+        ad_cur.execute('select imaged_data, page_url, resource_url, resource_type, frame_url, chain_element_block from classifications where is_classified_as_ad_combined_filter_lists')
+    elif filter_list == 'us_difference_lists':
+        print(filter_list)
+        ad_cur.execute('select imaged_data, page_url, resource_url, resource_type, frame_url from classifications where (is_classified_as_ad and (not is_classified_as_ad_combined_filter_lists))')
+    elif filter_list == 'everything':
+        print(filter_list)
+        ad_cur.execute('select imaged_data, page_url, resource_url, resource_type, frame_url from classifications')
     else:
-        ad_cur.execute('select imaged_data, page_url, resource_url, resource_type, frame_url from classifications where is_classified_as_ad')
+        print('PANIC! Got unknown command: ' + filter_list)
+        sys.exit(1)
 
     for ad in ad_cur.fetchall():
-        if ad['page_url'] in ads:
-            ads[ad['page_url']].append((ad['imaged_data'], ad['resource_url'], ad['resource_type']))
+        ad_data = None
+        if 'chain_element_block' in ad:
+            ad_data = (ad['imaged_data'], ad['resource_url'], ad['resource_type'], ad['chain_element_block'])
         else:
-            ads[ad['page_url']] = [(ad['imaged_data'], ad['resource_url'], ad['resource_type'])]
+            ad_data = (ad['imaged_data'], ad['resource_url'], ad['resource_type'], None)
+        if ad['page_url'] in ads:
+            ads[ad['page_url']].append(ad_data)
+        else:
+            ads[ad['page_url']] = [ad_data]
 
     for page_url in tqdm(ads):
         dict_cur.execute('select file_name from graphml_mappings where queried_url=%s', [page_url])
@@ -205,7 +241,7 @@ def generate_chains(bucket, s3, filter_list=None):
                     all_remote_frames = get_remote_frame_nodes(all_nodes)
 
                     injector_chains = dict()
-                    for imaged_data, resource_url, resource_type in ads[page_url]:
+                    for imaged_data, resource_url, resource_type, chain_element_block in ads[page_url]:
                         starting_node = None
                         if resource_type == 'image':
                             resource_node = get_image_node(all_resource_nodes, value_edges, resource_url)
@@ -227,7 +263,14 @@ def generate_chains(bucket, s3, filter_list=None):
                         if starting_node is None:
                             continue
 
-                        injector_chains[imaged_data] = get_injector_chain(starting_node, [], all_nodes, edges_to_map)
+                        if chain_element_block is None:
+                            injector_chains[imaged_data] = get_injector_chain(starting_node, [], all_nodes, edges_to_map)
+                        else:
+                            new_starting_node = get_new_starting_node(starting_node, chain_element_block, all_nodes, edges_to_map)
+                            if new_starting_node is None:
+                                injector_chains[imaged_data] = get_injector_chain(starting_node, [], all_nodes, edges_to_map)
+                            else:
+                                injector_chains[imaged_data] = get_injector_chain(new_starting_node, [], all_nodes, edges_to_map)
 
                 except e:
                     continue
@@ -322,47 +365,47 @@ def safe_to_remove(node, from_edges_mapping, all_nodes):
     return len(parents_not_created_by_script) <= 2
 
 
+def update(input_dict):
+    pg_conn = psycopg2.connect(os.environ['PG_CONNECTION_STRING'])
+    dict_cur = pg_conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    output_dict = dict()
+    for key in tqdm(input_dict):
+        page_dict = input_dict[key]
+        updated_page_dict = dict()
+        for img in page_dict:
+            chain = page_dict[img]
+            dict_cur.execute('select resource_url, resource_type from image_data_table where imaged_data=%s', [img])
+            data = dict_cur.fetchone()
+            updated_page_dict[img] = [data['resource_url'], data['resource_type'], chain]
+
+        output_dict[key] = updated_page_dict
+
+    return output_dict
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Generates the nodes which corresponds to ads')
     parser.add_argument('--aws-access-key', help='aws access key')
     parser.add_argument('--aws-secret-key', help='aws secret key')
     parser.add_argument('--pg-bucket', help='aws bucket address')
+    parser.add_argument('--region', help='region to generate for')
+    parser.add_argument('--direction', help='generate upstream or downstream')
 
     args = parser.parse_args()
     s3Bucket = S3FileSystem(anon=False, key=args.aws_access_key, secret=args.aws_secret_key)
 
-    upstream_us, original_us = generate_chains(args.pg_bucket, s3Bucket)
-    with open('upstream_us_sri_lanka.json', 'w') as upstream:
-        json.dump(upstream_us, upstream)
-    with open('original_us_sri_lanka.json', 'w') as original:
-        json.dump(original_us, original)
+    if args.direction == 'downstream':
+        upstream_everything, original_everything = generate_chains(args.pg_bucket, s3Bucket, 'everything')
+        with open('downstream_everything_' + args.region + '.json', 'w') as original:
+            json.dump(update(original_everything), original)
+    else:
+        # upstream_intersection, original_intersection = generate_chains(args.pg_bucket, s3Bucket, 'lists')
+        # with open('upstream_lists_' + args.region + '.json', 'w') as upstream:
+        #     json.dump(update(upstream_intersection), upstream)
 
-    upstream_el, original_el = generate_chains(args.pg_bucket, s3Bucket, 'easylist')
-    with open('upstream_el_sri_lanka.json', 'w') as upstream:
-        json.dump(upstream_el, upstream)
-    with open('original_el_sri_lanka.json', 'w') as original:
-        json.dump(original_el, original)
+        # upstream_lists_difference_us, original_lists_difference_us = generate_chains(args.pg_bucket, s3Bucket, 'lists_difference_us')
+        # with open('upstream_lists_difference_us_' + args.region + '.json', 'w') as upstream:
+        #     json.dump(update(upstream_lists_difference_us), upstream)
 
-    upstream_s, original_s = generate_chains(args.pg_bucket, s3Bucket, 'supplement')
-    with open('upstream_s_sri_lanka.json', 'w') as upstream:
-        json.dump(upstream_s, upstream)
-    with open('original_s_sri_lanka.json', 'w') as original:
-        json.dump(original_s, original)
-
-    upstream_ep, original_ep = generate_chains(args.pg_bucket, s3Bucket, 'easyprivacy')
-    with open('upstream_ep_sri_lanka.json', 'w') as upstream:
-        json.dump(upstream_ep, upstream)
-    with open('original_ep_sri_lanka.json', 'w') as original:
-        json.dump(original_ep, original)
-
-    upstream_filterlists, original_filterlists = generate_chains(args.pg_bucket, s3Bucket, 'all_lists_combined')
-    with open('upstream_filterlists_sri_lanka.json', 'w') as output:
-        json.dump(upstream_filterlists, output)
-    with open('original_filterlists_sri_lanka.json', 'w') as output:
-        json.dump(original_filterlists, output)
-
-    upstream_all, original_all = generate_chains(args.pg_bucket, s3Bucket, 'allcombined')
-    with open('upstream_all_sri_lanka.json', 'w') as output:
-        json.dump(upstream_filterlists, output)
-    with open('original_all_sri_lanka.json', 'w') as output:
-        json.dump(original_filterlists, output)
+        upstream_us_difference_lists, original_us_difference_lists = generate_chains(args.pg_bucket, s3Bucket, 'us_difference_lists')
+        with open('upstream_us_difference_lists_' + args.region + '.json', 'w') as upstream:
+            json.dump(update(upstream_us_difference_lists), upstream)
