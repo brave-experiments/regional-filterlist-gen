@@ -349,20 +349,21 @@ def gen_script_chains(chains, all_nodes, to_edges):
 def safe_to_remove(node, from_edges_mapping, all_nodes):
     nodes_created_by_script = set()
     parents_to_nodes_created_by_script = set()
+    scripts_from_node = set()
 
     for edge in from_edges_mapping[node]:
         if edge[2]['edge type'] == 'create node':
             graphml_node = edge[1]
             actual_id = all_nodes[graphml_node]['node id']
             nodes_created_by_script.add(actual_id)
+            if all_nodes[graphml_node]['node type'] == 'script':
+                scripts_from_node.add(graphml_node)
         elif edge[2]['edge type'] == 'insert node':
             parents_to_nodes_created_by_script.add(edge[2]['parent'])
 
-    # if is_modifying_edge(edge) or is_event_listener_edge(edge) or is_creation_edge(edge):
-    #     if edge[1] not in all_injector_nodes:
-
+    scripts_safe_to_remove = all(safe_to_remove(script_node, from_edges_mapping, all_nodes) for script_node in scripts_from_node)
     parents_not_created_by_script = parents_to_nodes_created_by_script.difference(nodes_created_by_script)
-    return len(parents_not_created_by_script) <= 2
+    return len(parents_not_created_by_script) <= 2 and scripts_safe_to_remove
 
 
 def update(input_dict):
