@@ -1,4 +1,4 @@
-with open('/Users/asjosten/regional-filterlist-gen/adblock-rust-checking/filter_lists/albania/Albania.txt', 'r') as albania:
+with open('../../adblock-rust-checking/filter_lists/albania/Albania.txt', 'r') as albania:
     total_rules = 0
     network_rules = 0
     for line in albania.readlines():
@@ -11,7 +11,7 @@ with open('/Users/asjosten/regional-filterlist-gen/adblock-rust-checking/filter_
     print('Albania: ' + str(total_rules))
     print('network rules: ' + str(network_rules))
 
-with open('/Users/asjosten/regional-filterlist-gen/adblock-rust-checking/filter_lists/hungary/hufilter.txt', 'r') as hungary:
+with open('../../adblock-rust-checking/filter_lists/hungary/hufilter.txt', 'r') as hungary:
     total_rules = 0
     network_rules = 0
     for line in hungary.readlines():
@@ -24,7 +24,7 @@ with open('/Users/asjosten/regional-filterlist-gen/adblock-rust-checking/filter_
     print('Hungary: ' + str(total_rules))
     print('network rules: ' + str(network_rules))
 
-with open('/Users/asjosten/regional-filterlist-gen/adblock-rust-checking/filter_lists/sri_lanka/sri_lanka.txt', 'r') as sri_lanka:
+with open('../../adblock-rust-checking/filter_lists/sri_lanka/sri_lanka.txt', 'r') as sri_lanka:
     total_rules = 0
     network_rules = 0
     for line in sri_lanka.readlines():

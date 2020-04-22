@@ -52,7 +52,7 @@ def generate_vanity_stats(bucket, s3, region):
     return total_nodes / total_graph_files, total_edges / total_graph_files, total_size_mb / total_graph_files
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Generates the nodes which corresponds to ads')
+    parser = argparse.ArgumentParser(description='Generates some PageGraph vanity stats')
     parser.add_argument('--aws-access-key', help='aws access key')
     parser.add_argument('--aws-secret-key', help='aws secret key')
     parser.add_argument('--pg-bucket', help='aws bucket address')

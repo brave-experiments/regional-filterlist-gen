@@ -4,30 +4,6 @@ import json
 from urllib.parse import urlsplit
 from publicsuffix2 import get_sld
 
-
-# def generate_filterlist(region):
-#     current_dir = os.getcwd()
-#     upstream_file = os.path.join(current_dir, region, 'upstream.json')
-#     rules = set()
-#     with open(upstream_file, 'r') as upstream:
-#         upstream_dict = json.load(upstream)
-#         for page_url in upstream_dict:
-#             for imaged_data in upstream_dict[page_url]:
-#                 url_to_use = None
-#                 [resource_url, resource_type, chain] = upstream_dict[page_url][imaged_data]
-#                 if len(chain) == 0:
-#                     url_to_use = resource_url
-#                 else:
-#                     url_to_use = chain[-1]
-
-#                 url_parts = urlsplit(url_to_use)
-#                 rule = '||' + url_parts.netloc + url_parts.path
-#                 rules.add(rule)
-
-#     print(len(rules))
-#     with open(region + '.rules', 'w') as output:
-#         output.write('\n'.join(rules))
-
 def generate_filterlist(region):
     upstream_file = region + '.txt'
     rules = set()

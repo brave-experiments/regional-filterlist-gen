@@ -21,13 +21,13 @@ const ep_rules = fs.readFileSync(path.join(list_folder, 'easyprivacy.txt'), { en
 
 const combined_rules = el_rules.concat(supplement_rules).concat(ep_rules);
 
-chains_path = path.join(__dirname, 'chains_resources');
+chains_path = path.join('..', 'chains_resources');
 
 const client = new AdBlockClient.Engine(combined_rules, true);
 let blockedResourcesPerPageUrl = {};
 let uniqueBlockedResources = new Set();
 let outputMap = {};
-const dataFile = require(path.join(chains_path, supplement_folder,  `downstream_everything_${supplement_folder}.json`));
+const dataFile = require(path.join(chains_path, supplement_folder,  `downstream_everything.json`));
 for (const pageUrl in dataFile) {
     for (const imageData in dataFile[pageUrl]) {
         const [_resourceUrl, _resourceType, chain] = dataFile[pageUrl][imageData];

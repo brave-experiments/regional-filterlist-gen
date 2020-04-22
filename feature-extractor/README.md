@@ -1,3 +1,5 @@
+In order to execute the feature extractor, the [perceptual classifier](https://github.com/brave-experiments/ads-identifier/releases/download/0.3/ads-identifier-0.3.tar.gz) must be installed.
+
 # Content features extracted
 * image width
 * image height

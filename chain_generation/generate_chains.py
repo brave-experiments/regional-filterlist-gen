@@ -394,19 +394,26 @@ if __name__ == "__main__":
     args = parser.parse_args()
     s3Bucket = S3FileSystem(anon=False, key=args.aws_access_key, secret=args.aws_secret_key)
 
+    resources_folder = os.path.join('..', 'chains_resources')
+    if not os.path.isdir(resources_folder):
+        os.mkdir(resources_folder)
+
+    regions_folder = os.path.join(resources_folder, args.region)
+    if not os.path.isdir(regions_folder):
+        os.mkdir(regions_folder)
+
     if args.direction == 'downstream':
         upstream_everything, original_everything = generate_chains(args.pg_bucket, s3Bucket, 'everything')
-        with open('downstream_everything_' + args.region + '.json', 'w') as original:
+        output_path = os.path.join(regions_folder, 'downstream_everything.json')
+        with open(output_path, 'w') as original:
             json.dump(update(original_everything), original)
     else:
-        # upstream_intersection, original_intersection = generate_chains(args.pg_bucket, s3Bucket, 'lists')
-        # with open('upstream_lists_' + args.region + '.json', 'w') as upstream:
-        #     json.dump(update(upstream_intersection), upstream)
-
-        # upstream_lists_difference_us, original_lists_difference_us = generate_chains(args.pg_bucket, s3Bucket, 'lists_difference_us')
-        # with open('upstream_lists_difference_us_' + args.region + '.json', 'w') as upstream:
-        #     json.dump(update(upstream_lists_difference_us), upstream)
+        upstream_intersection, original_intersection = generate_chains(args.pg_bucket, s3Bucket, 'lists')
+        output_path = os.path.join(regions_folder, 'upstream_lists.json')
+        with open(output_path, 'w') as upstream:
+            json.dump(update(upstream_intersection), upstream)
 
         upstream_us_difference_lists, original_us_difference_lists = generate_chains(args.pg_bucket, s3Bucket, 'us_difference_lists')
-        with open('upstream_us_difference_lists_' + args.region + '.json', 'w') as upstream:
+        output_path = os.path.join(regions_folder, 'upstream_us_difference_lists.json')
+        with open(output_path, 'w') as upstream:
             json.dump(update(upstream_us_difference_lists), upstream)

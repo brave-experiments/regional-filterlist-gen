@@ -6,7 +6,8 @@ from tqdm import tqdm
 
 pg_conn = psycopg2.connect(os.environ['PG_CONNECTION_STRING'])
 insert_cur = pg_conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-with open('blocking_albania.json', 'r') as input_file:
+region = psycopg2.connect(os.environ['REGION'])
+with open('blocking_' + region + '.json', 'r') as input_file:
     blocking = json.load(input_file)
     for key in blocking:
         if key == 'easylist':
@@ -26,7 +27,7 @@ with open('blocking_albania.json', 'r') as input_file:
                 insert_cur.execute('update classifications set is_classified_as_ad_combined_filter_lists=%s where imaged_data=%s', [True, imaged_data])
                 pg_conn.commit()
 
-with open('non_blocking_albania.json', 'r') as input_file:
+with open('non_blocking_' + region + '.json', 'r') as input_file:
     non_blocking = json.load(input_file)
     for key in non_blocking:
         if key == 'easylist':
