@@ -10,7 +10,7 @@
         "aws-sdk": "^2.509.0",
         "file-type": "^12.1.0",
         "mime-types": "^2.1.24",
-        "parse-domain": "^2.3.2",
+        "parse-domain": "^2.3.4",
         "path": "^0.12.7",
         "puppeteer": "^1.19.0",
         "puppeteer-extra": "^2.1.3",

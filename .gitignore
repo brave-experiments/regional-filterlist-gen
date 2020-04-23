@@ -13,6 +13,8 @@ crawler/top-1m.csv
 
 adblock-rust-checking/node_modules
 
+chains_resources/
+
 .DS_Store
 *.graphml
 

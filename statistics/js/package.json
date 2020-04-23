@@ -1,0 +1,11 @@
+{
+    "name": "adblock_statistics",
+    "version": "0.1.0",
+    "description": "Statistics fetching",
+    "author": "Alexander Sjösten <sjosten.alexander@gmail.com>",
+    "license": "MPL-2.0",
+    "dependencies": {
+        "adblock-rs": "^0.2.7",
+        "argparse": "^1.0.10"
+    }
+}
