@@ -1,6 +1,6 @@
-In order to execute the feature extractor, the [perceptual classifier](https://github.com/brave-experiments/ads-identifier/releases/download/0.3/ads-identifier-0.3.tar.gz) must be installed.
+In order to execute the feature extractor, first install the perceptual classifier (found under classifier/perceptual).
 
-It is then executed with `PG_CONNECTION_STRING="postgressql-database" python3 extract_features.py --aws-access-key AWS_ACCESS_KEY --aws-secret-key AWS_SECRET_KEY --pg-bucket BUCKET_TO_PAGEGRAPH_FILES`.
+Them to extract features, execute `PG_CONNECTION_STRING="postgressql-database" python3 extract_features.py --aws-access-key AWS_ACCESS_KEY --aws-secret-key AWS_SECRET_KEY --pg-bucket BUCKET_TO_PAGEGRAPH_FILES`.
 
 # Content features extracted
 * image width

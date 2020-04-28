@@ -3,9 +3,10 @@
 Details are in each subfolder, but to run it, the following should be done:
 
 * Start by running the crawler located in `crawler`.
-* Once the crawler is done, classify the images. This is done in two steps.
-    - First, execute `extract_features.py` in `feature-extractor`
-    - Then, execute `classifier.py` in `classifier`.
+* Once the crawler is done, classify the images. This is done in three steps.
+    - First, install the perceptual classifier in `classifier/perceptual`
+    - Then, execute `extract_features.py` in `feature-extractor`
+    - Finally, execute `classifier.py` in `classifier`.
 * Once the classification is done, run the chain generation in `chain_generation` with `--direction` set to `downstream`.
 * After that, head over to `adblock-rust-checking`.
     - First execute `checkAll.js`
